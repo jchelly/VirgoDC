@@ -2,10 +2,104 @@
 #
 # Classes to read Millennium-1 output
 #
-import numpy as np
 
+import numpy as np
 from ..util.read_binary import BinaryFile
 from ..util.peano import peano_hilbert_key_inverses
+
+
+class GroupTabFile(BinaryFile):
+    """
+    Class for reading Millennium-1 group_tab files written by L-Gadget2
+    """
+    def __init__(self, fname, *args):
+        BinaryFile.__init__(self, fname, *args)
+
+        # Header
+        self.add_dataset("Ngroups",    np.int32)
+        self.add_dataset("Nids",       np.int32)
+        self.add_dataset("TotNgroups", np.int32)
+        self.add_dataset("NTask",     np.int32)
+        
+        # Establish endian-ness by sanity check on number of files
+        nfiles = self["NTask"][...]
+        if nfiles < 1 or nfiles > 65535:
+            self.enable_byteswap(True)
+
+        # Read header
+        ngroups    = self["Ngroups"][...]
+        nids       = self["Nids"][...]
+        nfiles     = self["NTask"][...]
+
+        # FoF group info
+        self.add_dataset("GroupLen",    np.int32, (ngroups,))
+        self.add_dataset("GroupOffset", np.int32, (ngroups,))
+
+    def sanity_check(self):
+
+        ngroups     = self["Ngroups"][...]
+        nids        = self["Nids"][...]
+        grouplen    = self["GroupLen"][...]
+        groupoffset = self["GroupOffset"][...]
+
+        if sum(grouplen) != nids:
+            return "Sum of group sizes does not equal number of particle IDs"
+
+        if any(groupoffset < 0) or any(groupoffset >= nids):
+            return "Group offset out of range"
+
+        if ngroups > 1:
+            if any(groupoffset[1:] != groupoffset[:-1] + grouplen[:-1]):
+                return "Group offset not equal to (offset+length) of previous group"
+
+        return None
+
+
+class GroupIDsFile(BinaryFile):
+    """
+    Class for reading Millennium-1 group_ids files written by L-Gadget2
+    """
+    def __init__(self, fname, *args):
+        BinaryFile.__init__(self, fname, *args)
+
+        # Header
+        self.add_dataset("Ngroups",    np.int32)
+        self.add_dataset("Nids",       np.int32)
+        self.add_dataset("TotNgroups", np.int32)
+        self.add_dataset("NTask",      np.int32)
+        
+        # Establish endian-ness by sanity check on number of files
+        nfiles = self["NFiles"][...]
+        if nfiles < 1 or nfiles > 65535:
+            self.enable_byteswap(True)
+
+        # Read header
+        Nids = self["Nids"][...]
+
+        # Particle IDs
+        self.add_dataset("GroupIDs",   np.int64, (Nids,))
+
+    def sanity_check(self):
+        
+        ids = self["GroupIDs"][...]
+        if np.any(ids < 0):
+            return "Found negative ID"
+
+        # Split ID into particle ID and hash key
+        key = np.right_shift(ids, 34)
+        ids = ids - np.left_shift(key, 34)
+
+        # Note: hash table size and max ID hard coded here
+        if np.any(key < 0) or np.any(key >= 256**3):
+            return "Hash key out of range"
+        if np.any(ids<0) or np.any(ids>2160**3):
+            return "Particle ID out of range"
+        if sum(ids==0) > 1:
+            return "Found multiple zero IDs"
+
+        # Return None if everything looks ok
+        return None
+
 
 class SubTabFile(BinaryFile):
     """
