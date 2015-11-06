@@ -2,10 +2,10 @@
 #
 # Classes to read Millennium-1 output
 #
-
-from read_binary import BinaryFile
 import numpy as np
-from peano import peano_hilbert_key_inverses
+
+from ..util.read_binary import BinaryFile
+from ..util.peano import peano_hilbert_key_inverses
 
 class SubTabFile(BinaryFile):
     """

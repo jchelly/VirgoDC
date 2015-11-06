@@ -3,7 +3,7 @@
 import numpy as np
 import re
 from collections import Mapping
-from read_binary import BinaryFile
+from ..util.read_binary import BinaryFile
 
 # Check if we have h5py
 try:
