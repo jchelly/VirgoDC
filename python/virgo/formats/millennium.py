@@ -5,8 +5,8 @@
 
 import numpy as np
 from ..util.read_binary import BinaryFile
-from ..util.peano import peano_hilbert_key_inverses
-
+from ..util.peano       import peano_hilbert_key_inverses
+from ..util.exceptions  import SanityCheckFailedException
 
 class GroupTabFile(BinaryFile):
     """
@@ -26,12 +26,8 @@ class GroupTabFile(BinaryFile):
         if nfiles < 1 or nfiles > 65535:
             self.enable_byteswap(True)
 
-        # Read header
-        ngroups    = self["Ngroups"][...]
-        nids       = self["Nids"][...]
-        nfiles     = self["NTask"][...]
-
         # FoF group info
+        ngroups = self["Ngroups"][...]
         self.add_dataset("GroupLen",    np.int32, (ngroups,))
         self.add_dataset("GroupOffset", np.int32, (ngroups,))
 
@@ -43,14 +39,14 @@ class GroupTabFile(BinaryFile):
         groupoffset = self["GroupOffset"][...]
 
         if sum(grouplen) != nids:
-            return "Sum of group sizes does not equal number of particle IDs"
+            raise SanityCheckFailedException("Sum of group sizes does not equal number of particle IDs")
 
         if any(groupoffset < 0) or any(groupoffset >= nids):
-            return "Group offset out of range"
+            raise SanityCheckFailedException("Group offset out of range")
 
         if ngroups > 1:
             if any(groupoffset[1:] != groupoffset[:-1] + grouplen[:-1]):
-                return "Group offset not equal to (offset+length) of previous group"
+                raise SanityCheckFailedException("Group offset not equal to (offset+length) of previous group")
 
         return None
 
@@ -83,7 +79,7 @@ class GroupIDsFile(BinaryFile):
         
         ids = self["GroupIDs"][...]
         if np.any(ids < 0):
-            return "Found negative ID"
+            raise SanityCheckFailedException("Found negative ID")
 
         # Split ID into particle ID and hash key
         key = np.right_shift(ids, 34)
@@ -91,11 +87,11 @@ class GroupIDsFile(BinaryFile):
 
         # Note: hash table size and max ID hard coded here
         if np.any(key < 0) or np.any(key >= 256**3):
-            return "Hash key out of range"
+            raise SanityCheckFailedException("Hash key out of range")
         if np.any(ids<0) or np.any(ids>2160**3):
-            return "Particle ID out of range"
+            raise SanityCheckFailedException("Particle ID out of range")
         if sum(ids==0) > 1:
-            return "Found multiple zero IDs"
+            raise SanityCheckFailedException("Found multiple zero IDs")
 
         # Return None if everything looks ok
         return None
@@ -168,17 +164,17 @@ class SubTabFile(BinaryFile):
 
         # Check assignment of subhalos to halos
         if np.sum(nsubperhalo) != nsubgroups:
-            return "Sum of NSubPerHalo is wrong"
+            raise SanityCheckFailedException("Sum of NSubPerHalo is wrong")
         ind = nsubperhalo > 0
         if np.any(firstsubofhalo[ind]<0) or np.any(firstsubofhalo[ind]>=nsubgroups):
-            return "FirstSubOfHalo out of range"
+            raise SanityCheckFailedException("FirstSubOfHalo out of range")
         if np.any(suboffset<0) or np.any(suboffset+sublen>nids):
-            return "Subhalo particle index(es) out of range"
+            raise SanityCheckFailedException("Subhalo particle index(es) out of range")
 
         # Check subhalo parent group index
         parent = np.repeat(np.arange(ngroups, dtype=np.int32), nsubperhalo)
         if np.any(subparenthalo != parent):
-            return "Subhalo parent halo index is wrong"
+            raise SanityCheckFailedException("Subhalo parent halo index is wrong")
 
         # Check quantities which should be finite
         for name in ("Halo_M_Mean200",   "Halo_R_Mean200", 
@@ -188,7 +184,7 @@ class SubTabFile(BinaryFile):
                      "SubVmax", "SubSpin", "SubHalfMass"):
             data = self[name][...]
             if np.any(np.logical_not(np.isfinite(data))):
-                return "Quantity %s has non-finite value" % name
+                raise SanityCheckFailedException("Quantity %s has non-finite value" % name)
         
         # Return None if everything looks ok
         return None
@@ -222,7 +218,7 @@ class SubIDsFile(BinaryFile):
         
         ids = self["groupIDs"][...]
         if np.any(ids < 0):
-            return "Found negative ID"
+            raise SanityCheckFailedException("Found negative ID")
 
         # Split ID into particle ID and hash key
         key = np.right_shift(ids, 34)
@@ -230,11 +226,11 @@ class SubIDsFile(BinaryFile):
 
         # Note: hash table size and max ID hard coded here
         if np.any(key < 0) or np.any(key >= 256**3):
-            return "Hash key out of range"
+            raise SanityCheckFailedException("Hash key out of range")
         if np.any(ids<0) or np.any(ids>2160**3):
-            return "Particle ID out of range"
+            raise SanityCheckFailedException("Particle ID out of range")
         if sum(ids==0) > 1:
-            return "Found multiple zero IDs"
+            raise SanityCheckFailedException("Found multiple zero IDs")
 
         # Return None if everything looks ok
         return None
@@ -319,23 +315,23 @@ class SnapshotFile(BinaryFile):
         # Check positions
         pos = self["PartType1/Coordinates"][...]
         if not(np.all(np.isfinite(pos))):
-            return "Particle coordinate is not finite"
+            raise SanityCheckFailedException("Particle coordinate is not finite")
         if np.any(pos < 0.0) or np.any(pos > boxsize):
-            return "Particle coordinate out of range"
+            raise SanityCheckFailedException("Particle coordinate out of range")
         # (don't dealloc positions yet - needed for hash table check)
 
         # Check velocities
         vel = self["PartType1/Velocities"][...]
         if not(np.all(np.isfinite(vel))):
-            return "Particle velocity is not finite"
+            raise SanityCheckFailedException("Particle velocity is not finite")
         if np.any(abs(vel) > 1.0e6):
-            return "Suspiciously high velocity"
+            raise SanityCheckFailedException("Suspiciously high velocity")
         del vel
 
         # Check IDs
         ids = self["PartType1/ParticleIDs"][...]
         if np.any(ids < 0) or np.any(ids > nptot):
-            return "Particle ID out of range"
+            raise SanityCheckFailedException("Particle ID out of range")
         del ids
 
         # Read hash table
@@ -365,7 +361,7 @@ class SnapshotFile(BinaryFile):
             ind = dx>0.5*boxsize
             dx[ind] = boxsize - dx[ind]
             if any(dx > 1.001*0.5*cellsize):
-                return "Particle not in correct hash cell"
+                raise SanityCheckFailedException("Particle not in correct hash cell")
         
         # Return None if everything looks ok
         return None

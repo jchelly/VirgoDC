@@ -1,3 +1,4 @@
 __all__ = [
     "read_binary", 
-    "peano"]
+    "peano",
+    "exceptions"]
