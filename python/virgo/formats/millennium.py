@@ -30,6 +30,9 @@ class GroupTabFile(BinaryFile):
         ngroups = self["Ngroups"][...]
         self.add_dataset("GroupLen",    np.int32, (ngroups,))
         self.add_dataset("GroupOffset", np.int32, (ngroups,))
+        self.add_dataset("GroupMinLen", np.int32)
+        minlen = self["GroupMinLen"][...]
+        self.add_dataset("Count", np.int32, (minlen,))
 
     def sanity_check(self):
 
