@@ -1,7 +1,7 @@
 #!/bin/env python
 #
 # Classes to read SubFind output from P-Gadget3
-# (at least the versions used for Millennium-2 and Aquarius)
+# (at least the versions used for Millennium-2, Aquarius and Phoenix)
 #
 
 import numpy as np
@@ -97,5 +97,12 @@ class SubTabFile(BinaryFile):
         self.add_dataset("SubMass",    self.float_type, (nsubgroups,))
         self.add_dataset("SubPos",     self.float_type, (nsubgroups,3))
         self.add_dataset("SubVel",     self.float_type, (nsubgroups,3))
-
+        self.add_dataset("SubCofM",    self.float_type, (nsubgroups,3))
+        self.add_dataset("SubSpin",    self.float_type, (nsubgroups,3))
+        self.add_dataset("SubVelDisp",     self.float_type, (nsubgroups,))
+        self.add_dataset("SubVmax",        self.float_type, (nsubgroups,))
+        self.add_dataset("SubRVmax",       self.float_type, (nsubgroups,))
+        self.add_dataset("SubHalfMass",    self.float_type, (nsubgroups,))
+        self.add_dataset("SubMostBoundID", self.id_type,    (nsubgroups,))
+        self.add_dataset("SubGrNr",        self.int,        (nsubgroups,))
 
