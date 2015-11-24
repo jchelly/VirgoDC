@@ -5,8 +5,24 @@
 
 import numpy as np
 from ..util.read_binary import BinaryFile
-from ..util.peano       import peano_hilbert_key_inverses
+from ..util.peano       import peano_hilbert_key_inverses, peano_hilbert_keys
 from ..util.exceptions  import SanityCheckFailedException
+
+
+def cosma_file_path(itype, isnap, ifile):
+    """Calculate location of Millennium files on Cosma"""
+    idest = (ifile+3*(63-isnap)) % 14
+    if itype == 0:
+        return "/milli%2.2i/d%2.2i/snapshot/snap_millennium_%3.3i.%i" % (idest,isnap,isnap,ifile)
+    elif itype == 1:
+        return "/milli%2.2i/d%2.2i/group_tab/group_tab_%3.3i.%i" % (idest,isnap,isnap,ifile)
+    elif itype == 2:
+        return "/milli%2.2i/d%2.2i/sub_tab/sub_tab_%3.3i.%i" % (idest,isnap,isnap,ifile)
+    elif itype == 3:
+        return "/milli%2.2i/d%2.2i/sub_ids/sub_ids_%3.3i.%i" % (idest,isnap,isnap,ifile)
+    elif itype == 4:
+        return "/milli%2.2i/d%2.2i/group_ids/group_ids_%3.3i.%i" % (idest,isnap,isnap,ifile)
+
 
 class GroupTabFile(BinaryFile):
     """
@@ -368,3 +384,120 @@ class SnapshotFile(BinaryFile):
         
         # Return None if everything looks ok
         return None
+
+
+class Snapshot():
+    """
+    Class for reading parts of a Millennium snapshot
+    using the hash table.
+    """
+    def __init__(self, basedir, basename, isnap):
+        """
+        Open a new snapshot
+
+        basedir:  name of directory with snapdir_??? and postproc_??? subdirs
+        basename: snapshot file name before the last underscore (e.g. snap_millennium)
+        isnap:    which snapshot to read
+        """
+        
+        # Store file name info
+        self.basedir    = basedir
+        self.basename   = basename
+        self.isnap      = isnap
+
+        # Get box size, size of hash grid etc from first file
+        snap = self.open_file(self.isnap, 0)
+        self.nhash   = snap["Header"].attrs["HashTabSize"]
+        self.boxsize = snap["Header"].attrs["BoxSize"]
+        self.nfiles  = snap["Header"].attrs["NumFilesPerSnapshot"]
+        self.ncell = 1
+        self.bits  = 0
+        while self.ncell**3 < self.nhash:
+            self.ncell *= 2
+            self.bits += 1
+
+        # Initialise cache for hash table
+        self.hash_table = {}
+
+
+    def open_file(self, isnap, ifile):
+        """
+        Open the specified snapshot file
+        """
+        if self.basedir != "COSMA":
+            fname = "%s/snapdir_%03d/%s_%03d.%d" % (self.basedir, isnap, 
+                                                    self.basename, isnap, ifile)
+        else:
+            fname = "/gpfs/data/Millennium/"+cosma_file_path(0, isnap, ifile)
+        return SnapshotFile(fname) 
+    
+
+    def read_region(self, coords):
+        """
+        Use the hash table to extract a region from a Millennium snapshot
+
+        coords:   region to read in the form (xmin, xmax, ymin, ymax, zmin, zmax)
+        """
+
+        # Flag requested hash cells
+        cellsize = self.boxsize / self.ncell
+        icoords = np.floor(np.asarray(coords, dtype=float) / cellsize)
+        idx = np.indices((icoords[1]-icoords[0]+1,
+                          icoords[3]-icoords[2]+1,
+                          icoords[5]-icoords[4]+1))
+        ix = np.mod(idx[0].flatten() + icoords[0], self.ncell)
+        iy = np.mod(idx[1].flatten() + icoords[2], self.ncell)
+        iz = np.mod(idx[2].flatten() + icoords[4], self.ncell)
+        hashgrid = np.zeros(self.nhash, dtype=np.bool)
+        hashgrid[peano_hilbert_keys(ix, iy, iz, self.bits)] = True
+
+        # Loop over files to read
+        pos = []
+        vel = []
+        ids = []
+        for ifile in range(self.nfiles):
+
+            snap = None
+
+            # Check if we have cached hash table data for this file
+            # so we can avoid opening it if it contains no selected cells
+            if ifile in self.hash_table:
+                first_hash_cell, last_hash_cell = self.hash_table[ifile]
+            else:
+                snap = self.open_file(self.isnap, ifile)
+                first_hash_cell = snap["first_hash_cell"][...]
+                last_hash_cell  = snap["last_hash_cell"][...]
+                self.hash_table[ifile] = (first_hash_cell, last_hash_cell)
+
+            # Check if we have some cells to read from this file
+            read_cell = hashgrid[first_hash_cell:last_hash_cell+1]
+            if np.any(read_cell):
+
+                # Need to read this file
+                if snap is None:
+                    snap = self.open_file(self.isnap, ifile)
+                    
+                # Read number of particles in this file
+                npart = snap["Header"].attrs["NumPart_ThisFile"][1]
+
+                # Read this part of the hash table
+                first_in_this_cell = snap["blockid"][...]
+                first_in_next_cell = np.empty_like(first_in_this_cell)
+                first_in_next_cell[:-1] = first_in_this_cell[1:]
+                first_in_next_cell[-1] = npart
+                num_in_cell = first_in_next_cell - first_in_this_cell
+
+                # Determine which particles we need to read
+                read_particle = np.repeat(read_cell, num_in_cell)
+
+                # Read the selected particles from this file
+                pos.append(snap["PartType1/Coordinates"][read_particle,:])
+                vel.append(snap["PartType1/Velocities"][read_particle,:])
+                ids.append(snap["PartType1/ParticleIDs"][read_particle])
+
+        # Assemble output arrays
+        pos = np.concatenate(pos, axis=0)
+        vel = np.concatenate(vel, axis=0)
+        ids = np.concatenate(ids)
+
+        return pos, vel, ids
