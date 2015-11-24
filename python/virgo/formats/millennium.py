@@ -167,7 +167,6 @@ class SubTabFile(BinaryFile):
         self.add_dataset("SubMostBoundID", np.int64,   (nsubgroups,))
         self.add_dataset("SubHalfMass",    np.float32, (nsubgroups,))
 
-
     def sanity_check(self):
 
         ngroups    = self["Ngroups"][...]
@@ -419,7 +418,6 @@ class Snapshot():
         # Initialise cache for hash table
         self.hash_table = {}
 
-
     def open_file(self, isnap, ifile):
         """
         Open the specified snapshot file
@@ -431,15 +429,14 @@ class Snapshot():
             fname = "/gpfs/data/Millennium/"+cosma_file_path(0, isnap, ifile)
         return SnapshotFile(fname) 
     
-
     def read_region(self, coords):
         """
         Use the hash table to extract a region from a Millennium snapshot
-
-        coords:   region to read in the form (xmin, xmax, ymin, ymax, zmin, zmax)
+        
+        coords: region to read in the form (xmin, xmax, ymin, ymax, zmin, zmax)
         """
 
-        # Flag requested hash cells
+        # Identify requested hash cells
         cellsize = self.boxsize / self.ncell
         icoords = np.floor(np.asarray(coords, dtype=float) / cellsize)
         idx = np.indices((icoords[1]-icoords[0]+1,
@@ -448,8 +445,19 @@ class Snapshot():
         ix = np.mod(idx[0].flatten() + icoords[0], self.ncell)
         iy = np.mod(idx[1].flatten() + icoords[2], self.ncell)
         iz = np.mod(idx[2].flatten() + icoords[4], self.ncell)
+        keys = peano_hilbert_keys(ix, iy, iz, self.bits)
+
+        # Read particles in these cells
+        return self.read_cells(keys)
+
+    def read_cells(self, keys):
+        """
+        Use the hash table to read particles with specified hash keys
+        """
+
+        # Flag requested grid cells
         hashgrid = np.zeros(self.nhash, dtype=np.bool)
-        hashgrid[peano_hilbert_keys(ix, iy, iz, self.bits)] = True
+        hashgrid[keys] = True
 
         # Loop over files to read
         pos = []
