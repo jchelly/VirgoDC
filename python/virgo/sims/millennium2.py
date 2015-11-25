@@ -4,7 +4,7 @@
 #
 
 import numpy as np
-import virgo.formats.subfind_pgadget3
+import virgo.formats.subfind_pgadget3 as subfind_pgadget3
 from virgo.formats.gadget_snapshot import GadgetBinarySnapshotFile
 
 

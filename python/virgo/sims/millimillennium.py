@@ -7,7 +7,7 @@
 #
 
 import numpy as np
-import virgo.formats.subfind_lgadget2
+import virgo.formats.subfind_lgadget2 as subfind_lgadget2
 from virgo.formats.gadget_snapshot import GadgetBinarySnapshotFile
 
 
