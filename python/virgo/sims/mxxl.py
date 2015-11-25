@@ -4,9 +4,9 @@
 #
 
 import numpy as np
-import ..formats.subfind_lgadget3
-from ..formats.gadget_snapshot  import GadgetBinarySnapshotFile
-from ..util import BinaryFile
+import virgo.formats.subfind_lgadget3
+from virgo.formats.gadget_snapshot  import GadgetBinarySnapshotFile
+from virgo.util import BinaryFile
 
 class SubDescFile(BinaryFile):
     """

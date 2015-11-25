@@ -4,9 +4,9 @@
 #
 
 import numpy as np
-from ..util.read_binary import BinaryFile
-from ..util.peano       import peano_hilbert_key_inverses, peano_hilbert_keys
-from ..util.exceptions  import SanityCheckFailedException
+from virgo.util.read_binary import BinaryFile
+from virgo.util.peano       import peano_hilbert_key_inverses, peano_hilbert_keys
+from virgo.util.exceptions  import SanityCheckFailedException
 
 
 def cosma_file_path(itype, isnap, ifile):

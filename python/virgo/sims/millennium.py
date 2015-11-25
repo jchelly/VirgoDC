@@ -7,8 +7,8 @@
 #
 
 import numpy as np
-import ..formats.subfind_lgadget2
-from ..formats.gadget_snapshot import GadgetBinarySnapshotFile
+import virgo.formats.subfind_lgadget2
+from virgo.formats.gadget_snapshot import GadgetBinarySnapshotFile
 
 
 class GroupTabFile(subfind_lgadget2.GroupTabFile):

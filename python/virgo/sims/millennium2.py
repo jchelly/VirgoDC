@@ -4,8 +4,8 @@
 #
 
 import numpy as np
-import ..formats.subfind_pgadget3
-from ..formats.gadget_snapshot import GadgetBinarySnapshotFile
+import virgo.formats.subfind_pgadget3
+from virgo.formats.gadget_snapshot import GadgetBinarySnapshotFile
 
 
 class SubTabFile(subfind_pgadget3.SubTabFile):
