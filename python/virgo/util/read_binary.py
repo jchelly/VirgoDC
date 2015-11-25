@@ -92,7 +92,7 @@ class BinaryAttrs(Mapping):
     a read of the underlying data rather than just returning the object.
     """
     def __init__(self):
-        self._items = {}
+        self._items = OrderedDict()
 
     def __getitem__(self, key):
         return self._items[key][...]
@@ -111,8 +111,8 @@ class BinaryGroup(Mapping):
     """
     def __init__(self, name):
         self.attrs    = BinaryAttrs()
-        self.datasets = {}
-        self.groups   = {}
+        self.datasets = OrderedDict()
+        self.groups   = OrderedDict()
         self.name     = name
 
     def __getitem__(self, key):
