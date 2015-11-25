@@ -1,7 +1,6 @@
 __all__ = [
-    "gadget_snapshot", 
-    "millennium",
-    "millennium2",
-    "mxxl",
+    "gadget_snapshot",
+    "subfind_lgadget2", 
     "subfind_pgadget3",
-    "subfind_lgadget3"]
+    "subfind_lgadget3",
+    "subfind_gadget4"]

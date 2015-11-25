@@ -1,8 +1,8 @@
 #!/bin/env python
 #
-# Classes to read Millennium-1 output
+# Classes to read Milli-Millennium output
 #
-# These are just calling the L-Gadget2 routines, specifying 8 byte IDs
+# These are just calling the L-Gadget2 routines, specifying 4 byte IDs
 # where it's not possible to determine the ID size automatically.
 #
 
@@ -23,7 +23,7 @@ class GroupIDsFile(subfind_lgadget2.GroupIDsFile):
     Class for reading Millennium-1 group_tab files written by L-Gadget2
     """
     def __init__(self, fname, *args):
-        subfind_lgadget2.GroupIDsFile.__init__(self, fname, id_bytes=8, *args)
+        subfind_lgadget2.GroupIDsFile.__init__(self, fname, id_bytes=4, *args)
 
 
 class SubTabFile(subfind_lgadget2.SubTabFile):
@@ -31,7 +31,7 @@ class SubTabFile(subfind_lgadget2.SubTabFile):
     Class for reading Millennium-1 sub_tab files written by L-SubFind
     """
     def __init__(self, fname, *args):
-        subfind_lgadget2.SubTabFile.__init__(self, fname, id_bytes=8, *args)
+        subfind_lgadget2.SubTabFile.__init__(self, fname, id_bytes=4, *args)
 
 
 class SubIDsFile(subfind_lgadget2.SubIDsFile):
@@ -39,7 +39,7 @@ class SubIDsFile(subfind_lgadget2.SubIDsFile):
     Class for reading Millennium-1 sub_ids files written by L-SubFind
     """
     def __init__(self, fname, *args):
-        subfind_lgadget2.SubIDsFile.__init__(self, fname, id_bytes=8, *args)
+        subfind_lgadget2.SubIDsFile.__init__(self, fname, id_bytes=4, *args)
 
 
 class SnapshotFile(subfind_lgadget2.SnapshotFile):

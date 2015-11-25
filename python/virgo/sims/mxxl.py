@@ -4,9 +4,9 @@
 #
 
 import numpy as np
-import subfind_pgadget3
-from gadget_snapshot import GadgetBinarySnapshotFile
-
+import ..formats.subfind_lgadget3
+from ..formats.gadget_snapshot  import GadgetBinarySnapshotFile
+from ..util import BinaryFile
 
 class SubDescFile(BinaryFile):
     """
