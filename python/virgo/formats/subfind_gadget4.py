@@ -7,6 +7,7 @@
 import numpy as np
 from virgo.util.read_binary import BinaryFile
 from virgo.util.exceptions  import SanityCheckFailedException
+from virgo.formats.gadget_snapshot import GadgetSnapshotFile
 
 class SubTabFile(BinaryFile):
     """
@@ -18,7 +19,7 @@ class SubTabFile(BinaryFile):
         self.add_dataset(name, dtype, shape)
         self.end_fortran_record()
 
-    def __init__(self, fname, id_bytes=4, *args):
+    def __init__(self, fname, id_bytes=8, *args):
         BinaryFile.__init__(self, fname, *args)
 
         # We need to know the data types used for particle IDs
@@ -98,3 +99,158 @@ class SubTabFile(BinaryFile):
             self.add_record("SubGrNr",            np.int32,        (nsubgroups,))
             self.add_record("SubParent",          np.int32,        (nsubgroups,))
 
+
+class GroupOrderedSnapshot():
+    """
+    Class for reading fof groups and subhalos from of a snapshot
+    where particles have been sorted by group membership.
+    """
+    def __init__(self, basedir, basename, isnap, id_bytes=8):
+        """
+        Open a new snapshot
+
+        basedir:  name of directory with snapdir_??? and groups_??? subdirs
+        basename: snapshot file name before the last underscore (e.g. snap_millennium)
+        isnap:    which snapshot to read
+        """
+        
+        # Store file name info
+        self.basedir    = basedir
+        self.basename   = basename
+        self.isnap      = isnap
+        self.id_bytes   = id_bytes
+
+        # Read group lengths from all files
+        self.foflentype = []
+        ifile  = 0
+        nfiles = 1
+        while ifile < nfiles:
+
+            # Open file and get number of files
+            sub = self.open_subtab_file(ifile)
+            if ifile == 0:
+                nfiles = sub["NTask"][...]
+
+            # Read group lengths
+            nfof = sub["Ngroups"][...]
+            if nfof > 0:
+                self.foflentype.append(sub["GroupLenType"][...])
+        
+            # Store number of groups in each file
+            if ifile == 0:
+                self.nfof_file = -np.ones(nfiles, dtype=np.int32)
+            self.nfof_file[ifile] = nfof
+
+            ifile += 1
+            
+        self.foflentype = np.concatenate(self.foflentype, axis=0)
+
+        # Calculate offset to each fof group for each particle type
+        self.fof_offset = np.cumsum(self.foflentype, dtype=np.int64, axis=0) - self.foflentype
+
+        # Find number of snapshot files in this snapshot
+        snap = self.open_snap_file(0)
+        self.num_snap_files = snap["Header"].attrs["NumFilesPerSnapshot"]
+        self.npart_file = -np.ones((self.num_snap_files,6), dtype=np.int64)
+
+        # Calculate index of first fof group in each file
+        self.first_fof_in_file = np.cumsum(self.nfof_file) - self.nfof_file
+
+    def open_snap_file(self, ifile):
+        """
+        Open the specified snapshot file
+        """
+        fname = "%s/snapdir_%03d/%s_%03d.%d" % (self.basedir, self.isnap, 
+                                                self.basename, self.isnap, ifile)
+        return GadgetSnapshotFile(fname) 
+    
+    def open_subtab_file(self, ifile):
+        """
+        Open the specified subhalo tab file
+        """
+        fname = "%s/groups_%03d/fof_subhalo_tab_%03d.%d" % (self.basedir, self.isnap, self.isnap, ifile)
+        return SubTabFile(fname) 
+
+    def read_fof_group(self, grnr):
+        """
+        Read pos, vel, type for particles in the specified FoF group
+
+        grnr can either be a single integer giving the position of the group
+        in the full catalogue, or a two element sequence with the file number
+        and position relative to the start of that file
+
+        Returns a list with one element for each particle type.
+        Each element is a dictionary containing the Coordinates, Velocities
+        and ParticleIDs arrays.
+        """
+
+        try:
+            ifof = int(grnr)
+        except TypeError:
+            filenum, fofnum = grnr
+            ifof = self.first_fof_in_file[filenum] + fofnum
+
+        # Output will be a list with one entry per particle type.
+        # Each list element will be a dictionary with Coordinates, ParticleIDs etc.
+        result = [{} for _ in range(6)]
+
+        # Determine which particles we need to read for each type
+        first_in_fof = self.fof_offset[ifof,:]
+        last_in_fof  = first_in_fof + self.foflentype[ifof,:]
+        
+        # Now loop over snapshot files and read those we need
+        first_in_snap = np.zeros(6, dtype=np.int64)
+        for ifile in range(self.num_snap_files):
+            
+            snap = None
+
+            # Read number of particles in file if necessary
+            if self.npart_file[ifile,0] == -1:
+                snap = self.open_snap_file(ifile)
+                self.npart_file[ifile,:] = snap["Header"].attrs["NumPart_ThisFile"][:]
+
+            # Check if any particles we need are in this file
+            last_in_snap = first_in_snap + self.npart_file[ifile,:]
+
+            # Loop over quantities to read
+            for dataset in ("Coordinates","Velocities","ParticleIDs"):
+                    
+                # Loop over particle types
+                for itype in range(6):
+
+                    # Check if snapshot has particles of this type
+                    if last_in_snap[itype] >= first_in_snap[itype]:
+
+                        # Find range of particles to read from this file
+                        first_to_read = first_in_fof[itype] - first_in_snap[itype]
+                        last_to_read  = last_in_fof[itype]  - first_in_snap[itype]
+                        if first_to_read < 0:
+                            first_to_read = 0
+                        if last_to_read >= self.npart_file[ifile,itype]:
+                            last_to_read = self.npart_file[ifile,itype] - 1
+
+                        # Read the particles, if there are any in this file
+                        if last_to_read >= first_to_read and self.npart_file[ifile,itype] > 0:
+
+                            # May not have opened the snapshot yet
+                            if snap is None:
+                                snap = self.open_snap_file(ifile)
+
+                            # Read in the data
+                            if dataset not in result[itype]:
+                                result[itype][dataset] = []
+                                result[itype][dataset].append(snap["PartType%d/%s" % (itype, dataset)][first_to_read:last_to_read+1,...])
+
+            # Check if we're done
+            if np.all(last_in_snap >= last_in_fof):
+                break
+
+            # Advance to next file
+            first_in_snap += self.npart_file[ifile,:]
+
+        # Concatenate arrays read from each file
+        for itype in range(6):
+            for dataset in result[itype].keys():
+                result[itype][dataset] = np.concatenate(result[itype][dataset], axis=0)
+
+        return result
