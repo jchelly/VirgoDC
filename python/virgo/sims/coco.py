@@ -41,17 +41,18 @@ class GroupCatalogue(Mapping):
     This class acts as a dictionary where the keys are dataset
     names and the values are numpy arrays with the data.
     """
-    def __init__(self, basedir, isnap):
+    def __init__(self, basedir, isnap, datasets=None):
 
-        # Datasets to read
-        datasets = ["GroupLen", "GroupMass", "GroupPos", "GroupVel", "GroupLenType", "GroupMassType", 
-                    "Halo_M_Mean200",   "Halo_R_Mean200", 
-                    "Halo_M_Crit200",   "Halo_R_Crit200", 
-                    "Halo_M_TopHat200", "Halo_R_TopHat200", 
-                    "Nsubs", "FirstSub", "SubLen", "SubMass", "SubPos", "SubVel", 
-                    "SubLenType", "SubMassType", "SubCofM", "SubSpin", "SubVelDisp", 
-                    "SubVmax", "SubRVmax", "SubHalfMassRad", "SubHalfMassRadType", 
-                    "SubMassInRad", "SubMassInRadType", "SubMostBoundID", "SubGrNr", "SubParent"]
+        # Default datasets to read
+        if datasets is None:
+            datasets = ["GroupLen", "GroupMass", "GroupPos", "GroupVel", "GroupLenType", "GroupMassType", 
+                        "Halo_M_Mean200",   "Halo_R_Mean200", 
+                        "Halo_M_Crit200",   "Halo_R_Crit200", 
+                        "Halo_M_TopHat200", "Halo_R_TopHat200", 
+                        "Nsubs", "FirstSub", "SubLen", "SubMass", "SubPos", "SubVel", 
+                        "SubLenType", "SubMassType", "SubCofM", "SubSpin", "SubVelDisp", 
+                        "SubVmax", "SubRVmax", "SubHalfMassRad", "SubHalfMassRadType", 
+                        "SubMassInRad", "SubMassInRadType", "SubMostBoundID", "SubGrNr", "SubParent"]
 
         # Construct format string for file names
         fname_fmt = ("%s/groups_%03d/fof_subhalo_tab_%03d" % (basedir, isnap, isnap)) + ".%(i)d"
