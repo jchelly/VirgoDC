@@ -91,6 +91,7 @@ class SubTabFile(BinaryFile):
         self.add_dataset("FirstSub",               np.int32,        (ngroups,))
         
         # Subhalo properties
+        nsubgroups = self["Nsubgroups"][...]
         self.add_dataset("SubLen",     np.int32, (nsubgroups,))
         self.add_dataset("SubOffset",  np.int32, (nsubgroups,))
         self.add_dataset("SubParent",  np.int32, (nsubgroups,))
@@ -104,5 +105,5 @@ class SubTabFile(BinaryFile):
         self.add_dataset("SubRVmax",       self.float_type, (nsubgroups,))
         self.add_dataset("SubHalfMass",    self.float_type, (nsubgroups,))
         self.add_dataset("SubMostBoundID", self.id_type,    (nsubgroups,))
-        self.add_dataset("SubGrNr",        self.int,        (nsubgroups,))
+        self.add_dataset("SubGrNr",        np.int32,        (nsubgroups,))
 
