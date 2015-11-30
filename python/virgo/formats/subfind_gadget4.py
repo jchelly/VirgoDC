@@ -5,6 +5,7 @@
 #
 
 import numpy as np
+from collections import Mapping
 from virgo.util.read_binary import BinaryFile
 from virgo.util.exceptions  import SanityCheckFailedException
 from virgo.util.read_multi import read_multi

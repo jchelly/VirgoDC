@@ -9,7 +9,6 @@
 import numpy as np
 import virgo.formats.subfind_gadget4 as subfind_gadget4
 from virgo.formats.gadget_snapshot import GadgetBinarySnapshotFile
-from collections import Mapping
 
 class SubTabFile(subfind_gadget4.SubTabFile):
     """

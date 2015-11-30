@@ -5,6 +5,7 @@
 #
 
 import numpy as np
+from collections import Mapping
 from virgo.util.read_binary import BinaryFile
 from virgo.util.exceptions  import SanityCheckFailedException
 from virgo.util.read_multi import read_multi
@@ -109,6 +110,71 @@ class SubTabFile(BinaryFile):
         self.add_dataset("SubMostBoundID", self.id_type,    (nsubgroups,))
         self.add_dataset("SubGrNr",        np.int32,        (nsubgroups,))
 
+    def sanity_check(self):
+        
+        totnids       = self["TotNids"][...]
+        totngroups    = self["TotNgroups"][...]
+        totnsubgroups = self["TotNsubgroups"][...]
+        
+        # Checks on header
+        if totnids < 0 or totngroups < 0 or totnsubgroups < 0:
+            raise SanityCheckFailedException("Negative number of groups/subgroups/IDs")
+
+        # Checks on group properties
+        if np.any(self["GroupLen"][...] < 0):
+            raise SanityCheckFailedException("Found group with non-positive length!")
+        if totnids < 2**31:
+            # Offsets overflow if we have too many particles (e.g. Millennium-2), 
+            # so this test is expected to fail in that case
+            if np.any(self["GroupOffset"][...] < 0) or np.any(self["GroupOffset"][...]+self["GroupLen"][...] > totnids):
+                raise SanityCheckFailedException("Found group with offset out of range!")
+
+        # Check pointers from groups to subgroups are sane
+        firstsub = self["FirstSub"][...]
+        nsubs    = self["Nsubs"][...]
+        if np.any(nsubs < 0):
+            raise SanityCheckFailedException("Negative number of subgroups in group!")
+        ind = nsubs > 0
+        if np.any(firstsub[ind] < 0) or np.any(firstsub[ind]+nsubs[ind] > totnsubgroups):
+            raise SanityCheckFailedException("Found group with subgroup index out of range!")
+
+        # Check some group properties that we expect to be finite and non-negative
+        for prop in ("GroupMass",
+                     "Halo_M_Mean200",  "Halo_R_Mean200",
+                     "Halo_M_Crit200",  "Halo_R_Crit200",
+                     "Halo_M_TopHat200","Halo_R_TopHat200"):
+            data = self[prop][...]
+            if not(np.all(np.isfinite(data))):
+                raise Exception("Found non-finite value in dataset %s" % prop)
+            if not(np.all(data >= 0.0)):
+                raise Exception("Found negative value in dataset %s" % prop)
+
+        # Checks on subgroup properties
+        if np.any(self["SubLen"][...] < 0):
+            raise SanityCheckFailedException("Found subgroup with non-positive length!")
+        if totnids < 2**31:
+            # Offsets overflow if we have too many particles (e.g. Millennium-2),
+            # so this test is expected to fail in that case
+            if np.any(self["SubOffset"][...] < 0) or np.any(self["SubOffset"][...]+self["SubLen"][...] > totnids):
+                raise SanityCheckFailedException("Found group with offset out of range!")
+
+        # Check some subgroup properties that we expect to be finite and (in some cases) non-negative
+        for prop in ("SubMass","SubPos","SubVel","SubCofM","SubSpin","SubVelDisp",
+                     "SubVmax","SubRVmax","SubHalfMass"):
+            data = self[prop][...]
+            if not(np.all(np.isfinite(data))):
+                raise Exception("Found non-finite value in dataset %s" % prop)
+            if not(np.all(data >= 0.0)) and prop in ("SubMass","SubVelDisp","SubVmax","SubRVmax","SubHalfMass"):
+                raise Exception("Found negative value in dataset %s" % prop)
+
+        # Check SubGrNr is in range and in the expected order
+        subgrnr = self["SubGrNr"][...]
+        if np.any(subgrnr<0) or np.any(subgrnr>=totngroups):
+            raise SanityCheckFailedException("Subgroup's SubGrNr out of range!")
+        if subgrnr.shape[0] > 1:
+            if np.any(subgrnr[1:] < subgrnr[:-1]):
+                raise SanityCheckFailedException("Subgroup SubGrNr's are not in ascending order!")
+
 
 class SubIDsFile(BinaryFile):
     """
@@ -175,7 +241,11 @@ class GroupCatalogue(Mapping):
         fname_fmt = ("%s/groups_%03d/subhalo_tab_%03d" % (basedir, isnap, isnap)) + ".%(i)d"
 
         # Get number of files
-        f = SubTabFile(fname_fmt % {"i":0}, id_bytes=id_bytes)
+        f = SubTabFile(fname_fmt % {"i":0}, 
+                       id_bytes=id_bytes, float_bytes=float_bytes,
+                       SO_VEL_DISPERSIONS=SO_VEL_DISPERSIONS, 
+                       SO_BAR_INFO=SO_BAR_INFO,
+                       WRITE_SUB_IN_SNAP_FORMAT=WRITE_SUB_IN_SNAP_FORMAT)
         nfiles = f["NTask"][...]
         del f
         
