@@ -27,3 +27,41 @@ class SnapshotFile(GadgetBinarySnapshotFile):
     These are really just Gadget binary snapshots.
     """
     pass
+
+
+class GroupCatalogue(subfind_pgadget3.GroupCatalogue):
+    """
+    Class for reading the complete group catalogue for
+    a Millennium-2 snapshot into memory.
+
+    This class acts as a dictionary where the keys are dataset
+    names and the values are numpy arrays with the data.
+    """
+    def __init__(self, basedir, isnap, datasets=None):
+        subfind_pgadget3.GroupOrderedSnapshot.__init__(self, 
+                                                       basedir, 
+                                                       basename, 
+                                                       isnap,
+                                                       SO_VEL_DISPERSIONS=False,
+                                                       SO_BAR_INFO=False,
+                                                       WRITE_SUB_IN_SNAP_FORMAT=False,
+                                                       id_bytes=8, float_bytes=4,
+                                                       *args)
+
+
+class GroupOrderedSnapshot(subfind_pgadget3.GroupOrderedSnapshot):
+    """
+    Class for extracting groups and subgroups from Millennium-2 
+    output with group ordered snapshot files.
+    """
+    def __init__(self, basedir, basename, isnap):
+        subfind_pgadget3.GroupOrderedSnapshot.__init__(self, 
+                                                       basedir, 
+                                                       basename, 
+                                                       isnap,
+                                                       SO_VEL_DISPERSIONS=False,
+                                                       SO_BAR_INFO=False,
+                                                       WRITE_SUB_IN_SNAP_FORMAT=False,
+                                                       id_bytes=8, float_bytes=4,
+                                                       *args)
+ 

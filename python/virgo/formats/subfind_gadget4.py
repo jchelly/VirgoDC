@@ -101,6 +101,50 @@ class SubTabFile(BinaryFile):
             self.add_record("SubParent",          np.int32,        (nsubgroups,))
 
 
+class GroupCatalogue(Mapping):
+    """
+    Class for reading the complete group catalogue for
+    a snapshot into memory.
+
+    This class acts as a dictionary where the keys are dataset
+    names and the values are numpy arrays with the data.
+    """
+    def __init__(self, basedir, isnap, id_bytes=8, datasets=None):
+
+        # Default datasets to read
+        if datasets is None:
+            datasets = ["GroupLen", "GroupMass", "GroupPos", "GroupVel", "GroupLenType", "GroupMassType", 
+                        "Halo_M_Mean200",   "Halo_R_Mean200", 
+                        "Halo_M_Crit200",   "Halo_R_Crit200", 
+                        "Halo_M_TopHat200", "Halo_R_TopHat200", 
+                        "Nsubs", "FirstSub", "SubLen", "SubMass", "SubPos", "SubVel", 
+                        "SubLenType", "SubMassType", "SubCofM", "SubSpin", "SubVelDisp", 
+                        "SubVmax", "SubRVmax", "SubHalfMassRad", "SubHalfMassRadType", 
+                        "SubMassInRad", "SubMassInRadType", "SubMostBoundID", "SubGrNr", "SubParent"]
+
+        # Construct format string for file names
+        fname_fmt = ("%s/groups_%03d/subhalo_tab_%03d" % (basedir, isnap, isnap)) + ".%(i)d"
+
+        # Get number of files
+        f = SubTabFile(fname_fmt % {"i":0}, id_bytes=id_bytes)
+        nfiles = f["NTask"][...]
+        del f
+        
+        # Read the catalogue data
+        self._items = read_multi(SubTabFile, fname_fmt, np.arange(nfiles), datasets, 
+                                 id_bytes=id_bytes)
+
+    def __getitem__(self, key):
+        return self._items[key]
+
+    def __len__(self):
+        return len(self._items)
+
+    def __iter__(self):
+        for key in self._items.keys():
+            yield key
+
+
 class GroupOrderedSnapshot():
     """
     Class for reading fof groups and subhalos from a snapshot
@@ -170,7 +214,7 @@ class GroupOrderedSnapshot():
         Open the specified subhalo tab file
         """
         fname = "%s/groups_%03d/fof_subhalo_tab_%03d.%d" % (self.basedir, self.isnap, self.isnap, ifile)
-        return SubTabFile(fname) 
+        return SubTabFile(fname, id_bytes=self.id_bytes) 
 
     def read_fof_group(self, grnr):
         """
@@ -257,44 +301,3 @@ class GroupOrderedSnapshot():
         return result
 
 
-class GroupCatalogue(Mapping):
-    """
-    Class for reading the complete group catalogue for
-    a snapshot into memory.
-
-    This class acts as a dictionary where the keys are dataset
-    names and the values are numpy arrays with the data.
-    """
-    def __init__(self, basedir, isnap, id_bytes=8, datasets=None):
-
-        # Default datasets to read
-        if datasets is None:
-            datasets = ["GroupLen", "GroupMass", "GroupPos", "GroupVel", "GroupLenType", "GroupMassType", 
-                        "Halo_M_Mean200",   "Halo_R_Mean200", 
-                        "Halo_M_Crit200",   "Halo_R_Crit200", 
-                        "Halo_M_TopHat200", "Halo_R_TopHat200", 
-                        "Nsubs", "FirstSub", "SubLen", "SubMass", "SubPos", "SubVel", 
-                        "SubLenType", "SubMassType", "SubCofM", "SubSpin", "SubVelDisp", 
-                        "SubVmax", "SubRVmax", "SubHalfMassRad", "SubHalfMassRadType", 
-                        "SubMassInRad", "SubMassInRadType", "SubMostBoundID", "SubGrNr", "SubParent"]
-
-        # Construct format string for file names
-        fname_fmt = ("%s/groups_%03d/subhalo_tab_%03d" % (basedir, isnap, isnap)) + ".%(i)d"
-
-        # Get number of files
-        f = SubTabFile(fname_fmt % {"i":0}, id_bytes=id_bytes)
-        nfiles = f["NTask"][...]
-        del f
-        
-        # Read the catalogue data
-        self._items = read_multi(SubTabFile, fname_fmt, np.arange(nfiles), datasets)
-
-    def __getitem__(self, key):
-        return self._items[key]
-
-    def __len__(self):
-        return len(self._items)
-
-    def __iter__(self):
-        for key in self._items.keys():
-            yield key

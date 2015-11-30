@@ -2,6 +2,9 @@
 #
 # Classes to read COCO output
 #
+# COCO has Gadget type 1 binary snapshots and Gadget-4 subfind
+# output files.
+#
 
 import numpy as np
 import virgo.formats.subfind_gadget4 as subfind_gadget4
@@ -26,10 +29,16 @@ class SnapshotFile(GadgetBinarySnapshotFile):
 
 class GroupOrderedSnapshot(subfind_gadget4.GroupOrderedSnapshot):
     """
-    Class for extracting groups and subgroups from Gadget-4 
+    Class for extracting groups and subgroups from COCO 
     output with group ordered snapshot files.
     """
-    pass
+    def __init__(self, basedir, basename, isnap):
+        subfind_gadget4.GroupOrderedSnapshot.__init__(self, 
+                                                      basedir, 
+                                                      basename, 
+                                                      isnap, 
+                                                      id_bytes=8,
+                                                      *args)
 
 
 class GroupCatalogue(subfind_gadget4.GroupCatalogue):
@@ -40,4 +49,10 @@ class GroupCatalogue(subfind_gadget4.GroupCatalogue):
     This class acts as a dictionary where the keys are dataset
     names and the values are numpy arrays with the data.
     """
-    pass
+    def __init__(self, basedir, isnap, datasets=None):
+        subfind_gadget4.GroupOrderedSnapshot.__init__(self, 
+                                                      basedir, 
+                                                      basename, 
+                                                      isnap, 
+                                                      id_bytes=8,
+                                                      *args)

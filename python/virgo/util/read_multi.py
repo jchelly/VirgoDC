@@ -14,6 +14,9 @@ def read_multi(file_type, format_str, idx, datasets, axis=0, *args, **kwargs):
     datasets  : sequence with names of datasets to read
     axis      : axis along which to concatenate arrays
 
+    args and kwargs are used to pass all extra arguments to the file_type
+    object, in case extra parameters are needed to open the file.
+
     It is assumed that the class file_type provides a h5py like interface
     to the data, so a h5py.File or a read_binary.BinaryFile may be used
     here.
