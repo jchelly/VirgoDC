@@ -7,6 +7,7 @@
 import numpy as np
 from virgo.util.read_binary import BinaryFile
 from virgo.util.exceptions  import SanityCheckFailedException
+from virgo.util.read_multi import read_multi
 
 
 class SubTabFile(BinaryFile):
@@ -17,7 +18,7 @@ class SubTabFile(BinaryFile):
                  SO_VEL_DISPERSIONS=False,
                  SO_BAR_INFO=False,
                  WRITE_SUB_IN_SNAP_FORMAT=False,
-                 id_bytes=4, float_bytes=4,
+                 id_bytes=8, float_bytes=4,
                  *args):
         BinaryFile.__init__(self, fname, *args)
 
@@ -113,7 +114,7 @@ class SubIDsFile(BinaryFile):
     """
     Class for reading sub_ids files written by P-Gadget3
     """
-    def __init__(self, fname, id_bytes=4, *args):
+    def __init__(self, fname, id_bytes=8, *args):
         BinaryFile.__init__(self, fname, *args)
 
         # We need to know the data type used for particle IDs
@@ -141,3 +142,47 @@ class SubIDsFile(BinaryFile):
 
         # Add dataset with particle IDs
         self.add_dataset("GroupIDs",   self.id_type, (Nids,))
+
+
+class GroupCatalogue(Mapping):
+    """
+    Class for reading the complete group catalogue for
+    a snapshot into memory.
+
+    This class acts as a dictionary where the keys are dataset
+    names and the values are numpy arrays with the data.
+    """
+    def __init__(self, basedir, isnap, id_bytes=8, datasets=None):
+
+        # Default datasets to read
+        if datasets is None:
+            datasets =  ["GroupLen",  "GroupOffset",  "GroupMass",  "GroupPos", 
+                         "Halo_M_Mean200",  "Halo_R_Mean200",  "Halo_M_Crit200",  
+                         "Halo_R_Crit200",  "Halo_M_TopHat200",  "Halo_R_TopHat200",  
+                         "VelDisp_Mean200",  "VelDisp_Crit200",  "VelDisp_TopHat200",  
+                         "ContaminationLen",  "ContaminationMass",  "Nsubs",  
+                         "FirstSub",  "SubLen",  "SubOffset",  "SubParent",  
+                         "SubMass",  "SubPos",  "SubVel",  "SubCofM",  "SubSpin",
+                         "SubVelDisp",  "SubVmax",  "SubRVmax",  "SubHalfMass",  
+                         "SubMostBoundID", "SubGrNr"]
+
+        # Construct format string for file names
+        fname_fmt = ("%s/groups_%03d/subhalo_tab_%03d" % (basedir, isnap, isnap)) + ".%(i)d"
+
+        # Get number of files
+        f = SubTabFile(fname_fmt % {"i":0}, id_bytes=id_bytes)
+        nfiles = f["NTask"][...]
+        del f
+        
+        # Read the catalogue data
+        self._items = read_multi(SubTabFile, fname_fmt, np.arange(nfiles), datasets)
+
+    def __getitem__(self, key):
+        return self._items[key]
+
+    def __len__(self):
+        return len(self._items)
+
+    def __iter__(self):
+        for key in self._items.keys():
+            yield key

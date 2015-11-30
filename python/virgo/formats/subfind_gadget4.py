@@ -7,6 +7,7 @@
 import numpy as np
 from virgo.util.read_binary import BinaryFile
 from virgo.util.exceptions  import SanityCheckFailedException
+from virgo.util.read_multi import read_multi
 from virgo.formats.gadget_snapshot import GadgetSnapshotFile
 
 class SubTabFile(BinaryFile):
@@ -254,3 +255,46 @@ class GroupOrderedSnapshot():
                 result[itype][dataset] = np.concatenate(result[itype][dataset], axis=0)
 
         return result
+
+
+class GroupCatalogue(Mapping):
+    """
+    Class for reading the complete group catalogue for
+    a snapshot into memory.
+
+    This class acts as a dictionary where the keys are dataset
+    names and the values are numpy arrays with the data.
+    """
+    def __init__(self, basedir, isnap, id_bytes=8, datasets=None):
+
+        # Default datasets to read
+        if datasets is None:
+            datasets = ["GroupLen", "GroupMass", "GroupPos", "GroupVel", "GroupLenType", "GroupMassType", 
+                        "Halo_M_Mean200",   "Halo_R_Mean200", 
+                        "Halo_M_Crit200",   "Halo_R_Crit200", 
+                        "Halo_M_TopHat200", "Halo_R_TopHat200", 
+                        "Nsubs", "FirstSub", "SubLen", "SubMass", "SubPos", "SubVel", 
+                        "SubLenType", "SubMassType", "SubCofM", "SubSpin", "SubVelDisp", 
+                        "SubVmax", "SubRVmax", "SubHalfMassRad", "SubHalfMassRadType", 
+                        "SubMassInRad", "SubMassInRadType", "SubMostBoundID", "SubGrNr", "SubParent"]
+
+        # Construct format string for file names
+        fname_fmt = ("%s/groups_%03d/subhalo_tab_%03d" % (basedir, isnap, isnap)) + ".%(i)d"
+
+        # Get number of files
+        f = SubTabFile(fname_fmt % {"i":0}, id_bytes=id_bytes)
+        nfiles = f["NTask"][...]
+        del f
+        
+        # Read the catalogue data
+        self._items = read_multi(SubTabFile, fname_fmt, np.arange(nfiles), datasets)
+
+    def __getitem__(self, key):
+        return self._items[key]
+
+    def __len__(self):
+        return len(self._items)
+
+    def __iter__(self):
+        for key in self._items.keys():
+            yield key
