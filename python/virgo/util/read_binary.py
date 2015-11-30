@@ -231,7 +231,7 @@ class BinaryDataset:
         self.fname  = fname
         self.dtype  = np.dtype(dtype)
         self.offset = offset
-        self.shape  = shape
+        self.shape  = tuple([int(i) for i in shape]) # Ensure we have tuple of ints
         self.name   = name
         self.count  = 1
         self.endian = "="
