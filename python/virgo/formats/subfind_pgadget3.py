@@ -8,6 +8,7 @@ import numpy as np
 from virgo.util.read_binary import BinaryFile
 from virgo.util.exceptions  import SanityCheckFailedException
 
+
 class SubTabFile(BinaryFile):
     """
     Class for reading sub_tab files written by P-Gadget3
@@ -107,3 +108,36 @@ class SubTabFile(BinaryFile):
         self.add_dataset("SubMostBoundID", self.id_type,    (nsubgroups,))
         self.add_dataset("SubGrNr",        np.int32,        (nsubgroups,))
 
+
+class SubIDsFile(BinaryFile):
+    """
+    Class for reading sub_ids files written by P-Gadget3
+    """
+    def __init__(self, fname, id_bytes=4, *args):
+        BinaryFile.__init__(self, fname, *args)
+
+        # We need to know the data type used for particle IDs
+        if id_bytes == 4:
+            self.id_type = np.uint32
+        elif id_bytes == 8:
+            self.id_type = np.uint64
+        
+        # Define data blocks in the subhalo_tab file
+        # Header
+        self.add_dataset("Ngroups",    np.int32)
+        self.add_dataset("TotNgroups", np.int32)
+        self.add_dataset("Nids",       np.int32)
+        self.add_dataset("TotNids",    np.int64)
+        self.add_dataset("NTask",      np.int32)
+        self.add_dataset("SendOffset", np.int32)
+
+        # Establish endian-ness by sanity check on number of files
+        nfiles = self["NTask"][...]
+        if nfiles < 1 or nfiles > 65535:
+            self.enable_byteswap(True)
+            
+        # Read header
+        Nids = self["Nids"][...]
+
+        # Add dataset with particle IDs
+        self.add_dataset("GroupIDs",   self.id_type, (Nids,))
