@@ -102,7 +102,7 @@ class SubTabFile(BinaryFile):
 
 class GroupOrderedSnapshot():
     """
-    Class for reading fof groups and subhalos from of a snapshot
+    Class for reading fof groups and subhalos from a snapshot
     where particles have been sorted by group membership.
     """
     def __init__(self, basedir, basename, isnap, id_bytes=8):
@@ -239,7 +239,7 @@ class GroupOrderedSnapshot():
                             # Read in the data
                             if dataset not in result[itype]:
                                 result[itype][dataset] = []
-                                result[itype][dataset].append(snap["PartType%d/%s" % (itype, dataset)][first_to_read:last_to_read+1,...])
+                            result[itype][dataset].append(snap["PartType%d/%s" % (itype, dataset)][first_to_read:last_to_read+1,...])
 
             # Check if we're done
             if np.all(last_in_snap >= last_in_fof):
