@@ -229,13 +229,14 @@ class GroupCatalogue(Mapping):
         if datasets is None:
             datasets =  ["GroupLen",  "GroupOffset",  "GroupMass",  "GroupPos", 
                          "Halo_M_Mean200",  "Halo_R_Mean200",  "Halo_M_Crit200",  
-                         "Halo_R_Crit200",  "Halo_M_TopHat200",  "Halo_R_TopHat200",  
-                         "VelDisp_Mean200",  "VelDisp_Crit200",  "VelDisp_TopHat200",  
+                         "Halo_R_Crit200",  "Halo_M_TopHat200",  "Halo_R_TopHat200", 
                          "ContaminationLen",  "ContaminationMass",  "Nsubs",  
                          "FirstSub",  "SubLen",  "SubOffset",  "SubParent",  
                          "SubMass",  "SubPos",  "SubVel",  "SubCofM",  "SubSpin",
                          "SubVelDisp",  "SubVmax",  "SubRVmax",  "SubHalfMass",  
                          "SubMostBoundID", "SubGrNr"]
+            if SO_VEL_DISPERSIONS:
+                datasets += ["VelDisp_Mean200",  "VelDisp_Crit200",  "VelDisp_TopHat200"]
 
         # Construct format string for file names
         fname_fmt = ("%s/groups_%03d/subhalo_tab_%03d" % (basedir, isnap, isnap)) + ".%(i)d"
