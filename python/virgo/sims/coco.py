@@ -49,8 +49,8 @@ class GroupCatalogue(subfind_gadget4.GroupCatalogue):
     names and the values are numpy arrays with the data.
     """
     def __init__(self, basedir, isnap, id_bytes=8, datasets=None):
-        subfind_gadget4.GroupOrderedSnapshot.__init__(self, 
-                                                      basedir, 
-                                                      isnap,
-                                                      id_bytes=id_bytes,
-                                                      datasets=datasets)
+        subfind_gadget4.GroupCatalogue.__init__(self, 
+                                                basedir, 
+                                                isnap,
+                                                id_bytes=id_bytes,
+                                                datasets=datasets)

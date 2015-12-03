@@ -87,6 +87,7 @@ class SubTabFile(BinaryFile):
         self.add_dataset("FirstSub",               np.int32,        (ngroups,))
         
         # Subhalo properties
+        nsubgroups = self["Nsubgroups"][...]
         self.add_dataset("SubLen",     np.int32, (nsubgroups,))
         self.add_dataset("SubOffset",  np.int32, (nsubgroups,))
         self.add_dataset("SubGrNr",    np.int64, (nsubgroups,))

@@ -124,7 +124,7 @@ class GroupCatalogue(Mapping):
                         "SubMassInRad", "SubMassInRadType", "SubMostBoundID", "SubGrNr", "SubParent"]
 
         # Construct format string for file names
-        fname_fmt = ("%s/groups_%03d/subhalo_tab_%03d" % (basedir, isnap, isnap)) + ".%(i)d"
+        fname_fmt = ("%s/groups_%03d/fof_subhalo_tab_%03d" % (basedir, isnap, isnap)) + ".%(i)d"
 
         # Get number of files
         f = SubTabFile(fname_fmt % {"i":0}, id_bytes=id_bytes)
