@@ -168,6 +168,9 @@ class GroupOrderedSnapshot():
 
         # Read group lengths from all files
         self.foflentype = []
+        self.sublentype = []
+        self.firstsub   = []
+        self.nsubs      = []
         ifile  = 0
         nfiles = 1
         while ifile < nfiles:
@@ -177,19 +180,29 @@ class GroupOrderedSnapshot():
             if ifile == 0:
                 nfiles = sub["NFiles"][...]
 
-            # Read group lengths
+            # Read group lengths etc
             nfof = sub["Ngroups"][...]
+            nsub = sub["Nsubgroups"][...]
             if nfof > 0:
                 self.foflentype.append(sub["GroupLenType"][...])
-        
+                self.nsubs.append(sub["Nsubs"][...])
+                self.firstsub.append(sub["FirstSub"][...])
+            if nsub > 0:
+                self.sublentype.append(sub["SubLenType"][...])
+
             # Store number of groups in each file
             if ifile == 0:
                 self.nfof_file = -np.ones(nfiles, dtype=np.int32)
+                self.nsub_file = -np.ones(nfiles, dtype=np.int32)
             self.nfof_file[ifile] = nfof
+            self.nsub_file[ifile] = nsub
 
             ifile += 1
             
         self.foflentype = np.concatenate(self.foflentype, axis=0)
+        self.nsubs      = np.concatenate(self.nsubs,      axis=0)
+        self.firstsub   = np.concatenate(self.firstsub,   axis=0)
+        self.sublentype = np.concatenate(self.sublentype, axis=0)
 
         # Calculate offset to each fof group for each particle type
         self.fof_offset = np.cumsum(self.foflentype, dtype=np.int64, axis=0) - self.foflentype
@@ -219,7 +232,7 @@ class GroupOrderedSnapshot():
 
     def read_fof_group(self, grnr):
         """
-        Read pos, vel, type for particles in the specified FoF group
+        Read pos, vel, id, and subnr for particles in the specified FoF group
 
         grnr can either be a single integer giving the position of the group
         in the full catalogue, or a two element sequence with the file number
@@ -299,6 +312,29 @@ class GroupOrderedSnapshot():
             for dataset in result[itype].keys():
                 result[itype][dataset] = np.concatenate(result[itype][dataset], axis=0)
 
+        # Now calculate which subfind group each particle belongs to
+        for itype in range(6):            
+            if "ParticleIDs" in result[itype].keys():
+
+                # Initialise array to -1 to indicate not in a subgroup
+                n = result[itype]["ParticleIDs"].shape[0]
+                result[itype]["SubNr"] = -np.ones(n, dtype=np.int32)
+
+                # Check if we have any subgroups in this group
+                if self.nsubs[ifof] > 0:
+
+                    # Find range of subgroups in this group
+                    first_sub = self.firstsub[ifof]
+                    last_sub  = first_sub + self.nsubs[ifof] - 1
+
+                    # Make array with subgroup number for each particle in these subgroups
+                    sublen = self.sublentype[first_sub:last_sub+1,itype]
+                    subnr  = np.repeat(np.arange(sublen.shape[0], dtype=np.int32), sublen)
+                    subnr += first_sub
+
+                    # Update the part of the output array corresponding to these particles
+                    result[itype]["SubNr"][0:subnr.shape[0]] = subnr
+                    
         return result
 
 

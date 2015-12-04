@@ -306,6 +306,9 @@ class GroupOrderedSnapshot():
 
         # Read group lengths from all files
         self.foflen = []
+        self.sublen = []
+        self.firstsub = []
+        self.nsubs  = []
         ifile  = 0
         nfiles = 1
         while ifile < nfiles:
@@ -319,15 +322,25 @@ class GroupOrderedSnapshot():
             nfof = sub["Ngroups"][...]
             if nfof > 0:
                 self.foflen.append(sub["GroupLen"][...])
-        
+                self.nsubs.append(sub["Nsubs"][...])
+                self.firstsub.append(sub["FirstSub"][...])
+            nsub = sub["Nsubgroups"][...]
+            if nsub > 0:
+                self.sublen.append(sub["SubLen"][...])
+
             # Store number of groups in each file
             if ifile == 0:
                 self.nfof_file = -np.ones(nfiles, dtype=np.int32)
+                self.nsub_file = -np.ones(nfiles, dtype=np.int32)
             self.nfof_file[ifile] = nfof
+            self.nsub_file[ifile] = nsub
 
             ifile += 1
             
-        self.foflen = np.concatenate(self.foflen, axis=0)
+        self.foflen   = np.concatenate(self.foflen,   axis=0)
+        self.nsubs    = np.concatenate(self.nsubs,    axis=0)
+        self.firstsub = np.concatenate(self.firstsub, axis=0)
+        self.sublen   = np.concatenate(self.sublen,   axis=0)
 
         # Calculate offset to each fof group
         self.fof_offset = np.cumsum(self.foflen, dtype=np.int64, axis=0) - self.foflen
@@ -440,5 +453,27 @@ class GroupOrderedSnapshot():
         # Concatenate arrays read from each file
         for dataset in result.keys():
             result[dataset] = np.concatenate(result[dataset], axis=0)
+
+        # Now calculate which subfind group each particle belongs to
+        if "ParticleIDs" in result.keys():
+
+            # Initialise array to -1 to indicate not in a subgroup
+            n = result["ParticleIDs"].shape[0]
+            result["SubNr"] = -np.ones(n, dtype=np.int32)
+
+            # Check if we have any subgroups in this group
+            if self.nsubs[ifof] > 0:
+
+                # Find range of subgroups in this group
+                first_sub = self.firstsub[ifof]
+                last_sub  = first_sub + self.nsubs[ifof] - 1
+
+                # Make array with subgroup number for each particle in these subgroups
+                sublen = self.sublen[first_sub:last_sub+1]
+                subnr  = np.repeat(np.arange(sublen.shape[0], dtype=np.int32), sublen)
+                subnr += first_sub
+
+                # Update the part of the output array corresponding to these particles
+                result["SubNr"][0:subnr.shape[0]] = subnr
 
         return result
