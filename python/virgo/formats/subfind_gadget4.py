@@ -40,7 +40,7 @@ class SubTabFile(BinaryFile):
         self.add_dataset("TotNgroups",    np.int32)
         self.add_dataset("TotNsubgroups", np.int32)
         self.add_dataset("TotNids",       np.int32)
-        self.add_dataset("NTask",         np.int32)
+        self.add_dataset("NFiles",        np.int32)
         self.add_dataset("padding1",      np.int32)
         self.add_dataset("Time",        np.float64)
         self.add_dataset("Redshift",    np.float64)
@@ -128,7 +128,7 @@ class GroupCatalogue(Mapping):
 
         # Get number of files
         f = SubTabFile(fname_fmt % {"i":0}, id_bytes=id_bytes)
-        nfiles = f["NTask"][...]
+        nfiles = f["NFiles"][...]
         del f
         
         # Read the catalogue data
@@ -175,7 +175,7 @@ class GroupOrderedSnapshot():
             # Open file and get number of files
             sub = self.open_subtab_file(ifile)
             if ifile == 0:
-                nfiles = sub["NTask"][...]
+                nfiles = sub["NFiles"][...]
 
             # Read group lengths
             nfof = sub["Ngroups"][...]
@@ -242,7 +242,7 @@ class GroupOrderedSnapshot():
 
         # Determine which particles we need to read for each type
         first_in_fof = self.fof_offset[ifof,:]
-        last_in_fof  = first_in_fof + self.foflentype[ifof,:]
+        last_in_fof  = first_in_fof + self.foflentype[ifof,:] - 1
         
         # Now loop over snapshot files and read those we need
         first_in_snap = np.zeros(6, dtype=np.int64)

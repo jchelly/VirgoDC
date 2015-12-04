@@ -388,7 +388,7 @@ class GroupOrderedSnapshot():
 
         # Determine which particles we need to read for each type
         first_in_fof = self.fof_offset[ifof]
-        last_in_fof  = first_in_fof + self.foflen[ifof]
+        last_in_fof  = first_in_fof + self.foflen[ifof] - 1
         
         # Now loop over snapshot files and read those we need
         first_in_snap = 0
