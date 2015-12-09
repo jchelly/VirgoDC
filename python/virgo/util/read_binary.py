@@ -433,23 +433,23 @@ class BinaryFile(BinaryGroup):
             outfile.write(data.data)
         outfile.close()
 
-    def hash(self):
+    def hash(self, hash_type="sha1"):
         """
-        Compute SHA1 hash of the data in this file.
+        Compute hash of the data in this file.
         Blocks are converted to little endian first so result should be
         independent of byte order, assuming file endian flag is set
         correctly.
 
         If every byte in the file belongs to exactly one block and
         byte swapping is not required the output from this should be
-        exactly the same as the output of the sha1sum command.
+        exactly the same as the output of the sha1sum (or similar) command.
         """
         
         # Get list of blocks sorted by offset
         blocks = sorted(self.all_blocks, key=lambda x: x.offset)
             
         # Read data and compute hash
-        file_hash = hashlib.sha1()
+        file_hash = hashlib.new(hash_type)
         for block in blocks:
             data = block[...]
             data = data.astype(data.dtype.newbyteorder("<"))
