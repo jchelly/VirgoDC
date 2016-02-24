@@ -2,4 +2,5 @@ __all__ = [
     "read_binary", 
     "peano",
     "exceptions",
-    "read_multi"]
+    "read_multi",
+    "match"]
