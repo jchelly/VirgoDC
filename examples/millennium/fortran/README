@@ -1,0 +1,144 @@
+Millennium Read Routines for Fortran
+------------------------------------
+
+The file read_millennium.tar.gz contains the source code for a set of
+subroutines which read the millennium simulation snapshot files, the friends
+of friends groups (group_tab and group_ids files), and the SubFind groups
+(sub_tab and sub_ids files).
+
+These are intended to be called from Fortran 90. The Millennium files are big
+endian, so on little endian machines the Fortran code must be compiled with the
+appropriate flag to ensure that input is byte swapped, e.g. use -byteswapio on
+the Portland compiler. The routines in readparticles.c must be compiled with
+the flag -DBYTESWAP to work on a little endian machine.
+
+Additionally, the readgroups.f90 routines assume that direct access record
+lengths are measured in bytes. This seems to be the default on the Sun and
+Portland compilers, but may require a compiler flag in some cases (eg use
+"-assume byterecl" on the Intel or Compaq compilers)
+
+The included files are:
+
+- readfile.f90:
+
+    readheader    - reads the header of a snapshot file
+    readfile      - reads all the particle data and the hash table
+                    from a single snapshot file
+- readgroups.f90:
+
+    readgrouptab / readsubtab  - read the list of FoF or SubFind groups
+                                   for one snapshot file
+    readgroupids / readsubids  - read the list of IDs of particles in FoF
+                                   or SubFind groups
+    readsubhalos               - read the halo and subhalo properties
+                                 calculated by L-SubFind, e.g. mass, radius,
+                                 velocity dispersion etc.
+
+- readregion.f90
+
+    readregion - read the positions, velocities and IDs of all particles
+                 in a region defined by flagging the required hash cells.
+
+- peano_keys.c
+
+Volker's peano_hilbert_key and peano_hilbert_key_inverse C functions, with
+very slight changes to make them more Fortran friendly. These convert between
+the x,y,z coordinates of a hash cell and its position along the Peano-Hilbert
+curve.
+
+- readparticles.c
+
+C routines to read the hash table and specified particles from a snapshot file
+without reading the whole thing. Fortran doesn't seem to have an efficient way
+to do this.
+
+There are also some example programs which use these routines, see below for
+details.
+
+
+Organisation of the Millennium files in Durham
+----------------------------------------------
+
+The snapshot files in the /data/milli?? directories have been arranged so that
+each snapshot is spread across a number of disks. This is intended to speed up
+access to the data by allowing different parts of a single snapshot to be read
+simultaneously. Unfortunately this means that if you want to find a particular
+file it isn't immediately obvious where to look.
+
+One solution would be to set up symbolic links to the files, with the links
+arranged in a more user friendly way. However, the disk containing the links
+would then be accessed whenever any Millennium file was read.
+
+Instead, the function in file_path.f90 can be used to obtain the location of
+any of the Millennium data files. It is called with:
+
+  filename = filepath(itype, isnap, ifile) 
+
+The parameters are:
+
+INTEGER itype - Which type of file to find (0-4)
+
+    0 - snapshot file
+    1 - group_tab file
+    2 - sub_tab file
+    3 - sub_ids file
+    4 - group_ids file
+
+INTEGER isnap - Which output time the file belongs to (0-63)
+INTEGER ifile - Which file within the snapshot (0-511)
+
+The fortran read routines described above take a character string parameter
+'basedir'. If this is set to  'MILLENNIUM', files are read from the locations
+given by the filepath() function (ie from the Durham data store).
+
+Otherwise, snapshot files are read from basedir/snapdir_xxx/ and group files
+are read from basedir/postproc_xxx/, where xxx is the snapshot number.
+
+
+Examples
+--------
+
+There are also four more source files which demonstrate the use of these
+subroutines. To compile them on a Sun it should be enough just to type 
+'make all' in the directory with the source code, otherwise you'll need to
+edit the compiler flags at the top of the Makefile.
+
+There are several shell scripts showing how to run these programs. To run them
+on titania/centaur/quintor you'll just need to change the name of the output
+file.
+
+readfileexample.f90:
+
+Reads a single snapshot file and outputs the coordinates of every tenth
+particle to an ascii file (this is just like reading an ordinary Gadget file
+with INTEGER*8 particle IDs).
+
+readregionexample.f90:
+
+Reads the all of the particles in a specified range of x,y,z coordinates and
+outputs them to an ascii file
+
+readgroupsexample.f90:
+
+Reads in the SubFind groups from one file and then retrieves the coordinates
+of the particles in the groups from the snapshot files. Outputs an ascii table
+with one line per particle where the columns are: index of SubFind group the
+particle belongs to, index of FoF group the particle belongs to, x,y,z 
+coordinates of particle.
+
+readfofgroupsexample.f90:
+
+As above, but this version reads the particles belonging to the friends of
+friends groups. This will output more particles than readgroupsexample.exe
+because it includes particles not bound to any SubFind group.
+
+readsubhalosexample.f90:
+
+Reads the halo and subhalo properties calculated by SubFind and outputs a list
+of FoF halos (with m200, r200, and x, y, z coordinates) and a list of
+subgroups (with half mass radius and x, y, z coordinates.) Could easily be
+modified to output any of the other halo/subhalo properties.
+
+
+
+
