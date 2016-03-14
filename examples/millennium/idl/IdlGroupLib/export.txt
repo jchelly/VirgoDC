@@ -1,0 +1,10 @@
+get_total_number_of_groups
+get_group_catalogue
+get_hash_table_size
+get_hash_table
+get_group_coordinates
+get_minimum_group_len
+get_groupcount_below_minimum_len
+get_particles_in_cubes
+get_spherical_region_count
+get_spherical_region_coordinates
