@@ -6,7 +6,8 @@
 
 /*
   Read the specified snapshot file from the Millennium-WMAP7 (MR7) run
-  using the hdf5 lite (H5LT) interface.
+  using the hdf5 lite (H5LT) interface. Writes positions, velocities
+  and particle IDs to stdout.
 */
 int main(int argc, char *argv[])
 {
