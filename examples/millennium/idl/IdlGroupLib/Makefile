@@ -1,7 +1,7 @@
 
-SYSTYPE="Regatta"
+#SYSTYPE="Regatta"
 #SYSTYPE="RZG_LinuxCluster"
-#SYSTYPE="RZG_LinuxCluster-gcc"
+SYSTYPE="RZG_LinuxCluster-gcc"
 
 CC       =   cc      
 CFLAGS   =   -O2 -Wall -fPIC
