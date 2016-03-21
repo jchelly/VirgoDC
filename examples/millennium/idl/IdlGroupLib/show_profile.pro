@@ -1,15 +1,15 @@
 
-BaseDir =   "/gmpa/mpa/vrs/Millennium/run4/"    ; The output-directory of the simulation
-SnapBase=   "snapshot"                   ; The basename of the snapshot files
+BaseDir =   "/virgo/data/Millennium/"    ; The output-directory of the simulation
+SnapBase=   "snap_millennium"                   ; The basename of the snapshot files
 
-Num = 4                          ; The number of the snapshot we look at
+Num = 30                          ; The number of the snapshot we look at
 
 Nr = 0                      ; The group number
 
 
 ;;; The object-file of the compile C-library for accessing the group catalogue
 
-ObjectFile = "/gmpa/mpa/vrs/Millennium/run4/L-Gadget2/IdlGroupLib/idlgrouplib.so"
+ObjectFile = "./idlgrouplib.so"
 
 Num=long(Num)
 exts='000'

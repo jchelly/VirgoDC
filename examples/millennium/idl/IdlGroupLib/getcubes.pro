@@ -1,13 +1,12 @@
 
-BaseDir =   "/ptmp/vrs/Millennium/"    
-;BaseDir =   "/r/v/vrs/Millennium/"    
+BaseDir =   "/virgo/data/Millennium/"
 SnapBase=   "snap_millennium"                   ; The basename of the snapshot files
 
 Num = 37                     ; The number of the snapshot we look at
 
 ;;; The object-file of the compile C-library for accessing the group catalogue
 
-ObjectFile = "/u/vrs/Millennium/L-Gadget2/IdlGroupLib/idlgrouplib2.so"
+ObjectFile = "./idlgrouplib.so"
 
 
 Num=long(Num)
