@@ -1,0 +1,20 @@
+#
+# Override CMake's default flags for certain compilers 
+#
+if ("${CMAKE_Fortran_COMPILER_ID}" STREQUAL "Intel")
+  #
+  # Flags for Intel ifort
+  #
+  set(CMAKE_Fortran_FLAGS_INIT            "-warn all -heap-arrays")
+  set(CMAKE_Fortran_FLAGS_DEBUG_INIT      "-O0 -g -check all -traceback")
+  set(CMAKE_Fortran_FLAGS_RELEASE_INIT    "-O3 -ip")
+  #
+elseif ("${CMAKE_Fortran_COMPILER_ID}" STREQUAL "GNU")
+  #
+  # Flags for GNU Gfortran
+  #
+  set(CMAKE_Fortran_FLAGS_INIT            "-Wall")
+  set(CMAKE_Fortran_FLAGS_DEBUG_INIT      "-O0 -g -fcheck=all -fbacktrace")
+  set(CMAKE_Fortran_FLAGS_RELEASE_INIT    "-O3")
+  #
+endif()
