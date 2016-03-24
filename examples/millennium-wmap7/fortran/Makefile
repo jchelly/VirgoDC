@@ -1,7 +1,7 @@
-# Assume HDF5 wrapper has been built in source dir
-HDF5_WRAPPER = ../../../fortran/hdf5_wrapper/
+# Assume HDF5 wrapper has been built in "build" directory under source dir
+HDF5_WRAPPER = ../../../fortran/hdf5_wrapper/build/
 
-F90      = gcc
+F90      = ifort
 F90FLAGS = -I$(HDF5_WRAPPER)/include/ -g
 LINK     = -L$(HDF5_WRAPPER)/lib/ -Wl,-rpath=$(HDF5_WRAPPER)/lib/ -lhdfwrapper
 
@@ -11,7 +11,7 @@ LINK     = -L$(HDF5_WRAPPER)/lib/ -Wl,-rpath=$(HDF5_WRAPPER)/lib/ -lhdfwrapper
 .f90.o:
 	$(F90) $(F90FLAGS) -c $< -o $*.o
 
-read_hdf5_snapshot:	read_hdf5_snapshot.o
-	$(F90) $(F90FLAGS) read_hdf5_snapshot.o $(LINK) -o read_hdf5_snapshot
+read_mr7_snapshot_file:	read_mr7_snapshot_file.o
+	$(F90) $(F90FLAGS) read_mr7_snapshot_file.o $(LINK) -o read_mr7_snapshot_file
 clean:
-	\rm -f *.o *.mod read_hdf5_snapshot
+	\rm -f *.o *.mod read_mr7_snapshot_file
