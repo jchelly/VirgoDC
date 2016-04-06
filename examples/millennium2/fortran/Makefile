@@ -1,4 +1,4 @@
-F90      = ifort
+F90      = gfortran
 F90FLAGS = -g
 LINK     =
 

@@ -1,7 +1,7 @@
 # Assume HDF5 wrapper has been built in "build" directory under source dir
 HDF5_WRAPPER = ../../../fortran/hdf5_wrapper/build/
 
-F90      = ifort
+F90      = gfortran
 F90FLAGS = -I$(HDF5_WRAPPER)/include/ -g
 LINK     = -L$(HDF5_WRAPPER)/lib/ -Wl,-rpath=$(HDF5_WRAPPER)/lib/ -lhdfwrapper
 
