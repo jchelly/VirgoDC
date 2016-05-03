@@ -1,14 +1,136 @@
 #!/bin/env python
 #
 # Classes to read SubFind output from P-Gadget3
-# (at least the versions used for Millennium-2, Aquarius and Phoenix)
+# (at least the versions used for Millennium-2, MR7, Aquarius and Phoenix)
 #
 
+import os
 import numpy as np
 from collections import Mapping
 from virgo.util.read_binary import BinaryFile
 from virgo.util.exceptions  import SanityCheckFailedException
 from virgo.util.read_multi import read_multi
+
+
+class GroupIDsFile(BinaryFile):
+    """
+    Class for reading group_ids files written by P-Gadget3
+    """
+    def __init__(self, fname, 
+                 id_bytes=8, float_bytes=4,
+                 *args):
+        BinaryFile.__init__(self, fname, *args)
+        
+        # Get number of bytes used to store IDs
+        if id_bytes == 4:
+            self.id_type = np.uint32
+        elif id_bytes == 8:
+            self.id_type = np.uint64
+        else:
+            raise ValueError("id_bytes must be 4 or 8")
+
+        self.add_dataset("Ngroups",    np.int32)
+        self.add_dataset("TotNgroups", np.int32)
+        self.add_dataset("Nids",       np.int32)
+        self.add_dataset("TotNids",    np.int64)
+        self.add_dataset("NTask",      np.int32)
+        self.add_dataset("SendOffset", np.int32)
+        
+        # Establish endian-ness by sanity check on number of files
+        nfiles = self["NTask"][...]
+        if nfiles < 1 or nfiles > 65535:
+            self.enable_byteswap(True)
+            
+        # Read header
+        Nids = self["Nids"][...]
+
+        # Add dataset with particle IDs
+        self.add_dataset("GroupIDs",   self.id_type, (Nids,))
+
+    def sanity_check(self):
+
+        # Check file has the expected size.
+        # This should catch the case where we got the ID type wrong.
+        file_size = os.stat(self.fname).st_size
+        Nids = self["Nids"][...]
+        if file_size != (4+4+4+8+4+4) + (np.dtype(self.id_type).itemsize * Nids):
+            raise SanityCheckFailedException("File size is incorrect!")
+
+        # Check that IDs don't contain duplicates
+        ids = self["GroupIDs"][...]
+        idx, counts = np.unique(ids, return_counts=True)
+        if np.any(counts != 1):
+            raise SanityCheckFailedException("Found duplicate IDs!")
+
+
+class GroupTabFile(BinaryFile):
+    """
+    Class for reading group_tab files written by P-Gadget3
+    """
+    def __init__(self, fname, 
+                 id_bytes=8, float_bytes=4,
+                 *args):
+        BinaryFile.__init__(self, fname, *args)
+
+        # We need to know the data types used for particle IDs
+        # and floating point subhalo properties (again, this can't be read from the file).
+        if id_bytes == 4:
+            self.id_type = np.uint32
+        elif id_bytes == 8:
+            self.id_type = np.uint64
+        else:
+            raise ValueError("id_bytes must be 4 or 8")
+        if float_bytes == 4:
+            self.float_type = np.float32
+        elif float_bytes == 8:
+            self.float_type = np.float64
+        else:
+            raise ValueError("float_bytes must be 4 or 8")
+
+        # Define data blocks in the group_tab file
+        # Header
+        self.add_dataset("Ngroups",    np.int32)
+        self.add_dataset("TotNgroups", np.int32)
+        self.add_dataset("Nids",       np.int32)
+        self.add_dataset("TotNids",    np.int64)
+        self.add_dataset("NTask",     np.int32)
+
+        # Establish endian-ness by sanity check on number of files
+        nfiles = self["NTask"][...]
+        if nfiles < 1 or nfiles > 65535:
+            self.enable_byteswap(True)
+ 
+        # FoF group information
+        ngroups = self["Ngroups"][...]
+        self.add_dataset("GroupLen",          np.int32,        (ngroups,))
+        self.add_dataset("GroupOffset",       np.int32,        (ngroups,))
+        self.add_dataset("GroupMass",         self.float_type, (ngroups,))
+        self.add_dataset("GroupCofM",         self.float_type, (ngroups,3))
+        self.add_dataset("GroupVel",          self.float_type, (ngroups,3))
+        self.add_dataset("GroupLenType",      np.int32,        (ngroups,6))
+        self.add_dataset("GroupMassType",     self.float_type, (ngroups,6))
+
+    def sanity_check(self):
+
+        # Check sum over particle types equals total number of particles in each group
+        grouplen     = self["GroupLen"][...]
+        grouplentype = self["GroupLenType"][...]
+        if np.any(np.sum(grouplentype, axis=1, dtype=np.int64) != grouplen):
+            raise SanityCheckFailedException("GroupLen not consistent with GroupLenType!")
+
+        # Each offset should be previous offset plus length
+        if self["Nids"][...] > 1:
+            groupoffset = self["GroupOffset"][...]        
+            if np.any(groupoffset[1:] != groupoffset[:-1] + grouplen[:-1]):
+                raise SanityCheckFailedException("Offsets and lengths not consistent!")
+        
+        # Check sum of mass over particle types equals total mass of particles in each group
+        groupmass     = self["GroupMass"][...]
+        groupmasstype = self["GroupMassType"][...]
+        mass_sum = np.sum(groupmasstype, axis=1, dtype=np.float64)
+        if np.any(np.abs(mass_sum-groupmass)/groupmass > 1.0e-5):
+            raise SanityCheckFailedException("GroupMass not consistent with GroupMassType!")
+        
 
 
 class SubTabFile(BinaryFile):
@@ -176,6 +298,7 @@ class SubTabFile(BinaryFile):
                 raise SanityCheckFailedException("Subgroup SubGrNr's are not in ascending order!")
 
 
+
 class SubIDsFile(BinaryFile):
     """
     Class for reading sub_ids files written by P-Gadget3
@@ -208,6 +331,22 @@ class SubIDsFile(BinaryFile):
 
         # Add dataset with particle IDs
         self.add_dataset("GroupIDs",   self.id_type, (Nids,))
+
+    def sanity_check(self):
+
+        # Check file has the expected size.
+        # This should catch the case where we got the ID type wrong.
+        file_size = os.stat(self.fname).st_size
+        Nids = self["Nids"][...]
+        if file_size != (4+4+4+8+4+4) + (np.dtype(self.id_type).itemsize * Nids):
+            raise SanityCheckFailedException("File size is incorrect!")
+
+        # Check that IDs don't contain duplicates
+        ids = self["GroupIDs"][...]
+        idx, counts = np.unique(ids, return_counts=True)
+        if np.any(counts != 1):
+            raise SanityCheckFailedException("Found duplicate IDs!")
+
 
 
 class GroupCatalogue(Mapping):
