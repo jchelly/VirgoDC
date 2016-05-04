@@ -49,11 +49,8 @@ class GroupIDsFile(BinaryFile):
 
     def sanity_check(self):
 
-        # Check file has the expected size.
-        # This should catch the case where we got the ID type wrong.
-        file_size = os.stat(self.fname).st_size
-        Nids = self["Nids"][...]
-        if file_size != (4+4+4+8+4+4) + (np.dtype(self.id_type).itemsize * Nids):
+        # Check file has the expected size (e.g. in case ID type is wrong)
+        if not(self.all_bytes_used()):
             raise SanityCheckFailedException("File size is incorrect!")
 
         # Check that IDs don't contain duplicates
@@ -61,7 +58,6 @@ class GroupIDsFile(BinaryFile):
         idx, counts = np.unique(ids, return_counts=True)
         if np.any(counts != 1):
             raise SanityCheckFailedException("Found duplicate IDs!")
-
 
 class GroupTabFile(BinaryFile):
     """
@@ -111,6 +107,10 @@ class GroupTabFile(BinaryFile):
         self.add_dataset("GroupMassType",     self.float_type, (ngroups,6))
 
     def sanity_check(self):
+
+        # Check file has the expected size (e.g. in case ID type is wrong)
+        if not(self.all_bytes_used()):
+            raise SanityCheckFailedException("File size is incorrect!")
 
         # Check sum over particle types equals total number of particles in each group
         grouplen     = self["GroupLen"][...]
@@ -233,6 +233,10 @@ class SubTabFile(BinaryFile):
         self.add_dataset("SubGrNr",        np.int32,        (nsubgroups,))
 
     def sanity_check(self):
+
+        # Check file has the expected size (e.g. in case ID type is wrong)
+        if not(self.all_bytes_used()):
+            raise SanityCheckFailedException("File size is incorrect!")
         
         totnids       = self["TotNids"][...]
         totngroups    = self["TotNgroups"][...]
@@ -334,11 +338,8 @@ class SubIDsFile(BinaryFile):
 
     def sanity_check(self):
 
-        # Check file has the expected size.
-        # This should catch the case where we got the ID type wrong.
-        file_size = os.stat(self.fname).st_size
-        Nids = self["Nids"][...]
-        if file_size != (4+4+4+8+4+4) + (np.dtype(self.id_type).itemsize * Nids):
+        # Check file has the expected size (e.g. in case ID type is wrong)
+        if not(self.all_bytes_used()):
             raise SanityCheckFailedException("File size is incorrect!")
 
         # Check that IDs don't contain duplicates

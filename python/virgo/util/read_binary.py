@@ -1,5 +1,6 @@
 #!/bin/env python
 
+import os
 import numpy as np
 from collections import OrderedDict, Mapping
 import mmap
@@ -445,6 +446,12 @@ class BinaryFile(BinaryGroup):
         exactly the same as the output of the sha1sum (or similar) command.
         """
         
+        # Only allow hashing if all bytes in the file belong to a block.
+        # This is so that we don't wrongly conclude that files are identical
+        # by only comparing a subset of the bytes.
+        if not(self.all_bytes_used()):
+            raise IOError("All bytes must belong to a dataset before a file can be hashed!")
+
         # Get list of blocks sorted by offset
         blocks = sorted(self.all_blocks, key=lambda x: x.offset)
             
@@ -472,7 +479,7 @@ class BinaryFile(BinaryGroup):
             raise IOError("Start and end of record markers don't match!")
         # Auto byteswapping is only reliable for short records
         if auto_byteswap and (end_offset - start_offset) > 65535:
-            raise Exception("Automatic byteswapping can only be used for records < 64kbytes")
+            raise IOError("Automatic byteswapping can only be used for records < 64kbytes")
         # Check if we need to switch the byte swapping setting
         if (end_offset - start_offset == irec_start.byteswap() and 
             end_offset - start_offset != irec_start and auto_byteswap):
@@ -482,3 +489,33 @@ class BinaryFile(BinaryGroup):
         if end_offset - start_offset != irec_start:
             raise IOError("Record markers do not agree with length of record!")
         self.fortran_record = None
+
+    def all_bytes_used(self):
+        """
+        Check that every byte in the file belongs to exactly one
+        dataset. Return True if this is the case, False otherwise.
+        Can be used for sanity checks on read routines.
+        """
+        
+        # Get lengths and offsets of blocks in the order they appear in the file
+        blocks  = sorted(self.all_blocks, key=lambda x: x.offset)
+        offsets = np.asarray([b.offset for b in blocks], dtype=np.int64)
+        lengths = np.asarray([b.nbytes for b in blocks], dtype=np.int64)
+
+        # First block (if any) must start at offset zero
+        if len(blocks) > 0 and offsets[0] != 0:
+            return False
+        
+        # Each block must start immediately after the previous block
+        if len(blocks) > 1:
+            if np.any(offsets[1:] != offsets[:-1] + lengths[:-1]):
+                return False
+
+        # Sum of block sizes must equal file size
+        file_size   = os.stat(self.fname).st_size
+        blocks_size = np.sum(lengths)
+        if file_size != blocks_size:
+            return False
+
+        # If we get to here, every byte belongs to exactly one dataset
+        return True
