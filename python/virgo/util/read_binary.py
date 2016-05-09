@@ -96,7 +96,7 @@ class BinaryAttrs(Mapping):
         self._items = OrderedDict()
 
     def __getitem__(self, key):
-        return self._items[key][...]
+        return self._items[key][()]
 
     def __len__(self):
         return len(self._items)
@@ -361,7 +361,7 @@ class BinaryFile(BinaryGroup):
         tmp.endian = self.endian
         self.offset += tmp.nbytes
         self.all_blocks.append(tmp)
-        return tmp[...]
+        return tmp[()]
 
     def set_endian(self, endian):
         """
