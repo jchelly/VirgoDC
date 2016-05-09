@@ -234,12 +234,12 @@ class BinaryDataset:
         self.offset = offset
         self.shape  = tuple([int(i) for i in shape]) # Ensure we have tuple of ints
         self.name   = name
-        self.count  = 1
+        self.size  = 1
         self.endian = "="
         self.attrs  = BinaryAttrs()
         for s in shape:
-            self.count *= s
-        self.nbytes = self.dtype.itemsize * self.count
+            self.size *= s
+        self.nbytes = self.dtype.itemsize * self.size
 
     def _mmap_file(self):
         """
@@ -300,9 +300,41 @@ class BinaryDataset:
         # Return the result
         return array
 
+    def __array__(self, dtype=None):
+        if dtype is None:
+            return self[...]
+        else:
+            return self[...].astype(dtype)
+
     def __repr__(self):
         return ('<BinaryDataset "%s": shape %s, type %s>' % 
                 (self.name, str(self.shape), str(self.dtype)))
+
+    def __len__(self):
+        if len(self.shape) >= 1:
+            return self.shape[0]
+        else:
+            raise TypeError("Can't return len of scalar dataset!")
+
+    def len(self):
+        if len(self.shape) >= 1:
+            return self.shape[0]
+        else:
+            raise TypeError("Can't return len of scalar dataset!")
+    
+    def __getattr__(self, name):
+        if name == "value":
+            return self[()]
+        else:
+            raise AttributeError("'%s' object has no attribute '%s'" % (self.__class__.__name__, name))
+
+    def __iter__(self):
+        if len(self.shape) >= 1:
+            for i in xrange(self.shape[0]):
+                yield self[i,...]
+        else:
+            raise TypeError("Can't iterate a scalar dataset!")
+        
 
 
 class BinaryFile(BinaryGroup):
