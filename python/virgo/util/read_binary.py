@@ -181,8 +181,21 @@ class BinaryGroup(Mapping):
     def __repr__(self):
         return ('<BinaryGroup "%s">' % (self.name,))
 
-    def write_hdf5(self, filename=None, h5group=None, mode="w-"):
+    def write_hdf5(self, filename=None, h5group=None, mode="w-", gzip=6):
         """Write the contents of the file to a new HDF5 file"""
+
+        # Chunk size to use
+        chunk_size = 8192*10
+
+        # Compression method
+        if gzip > 0:
+            compression      = "gzip"
+            compression_opts = gzip
+            shuffle          = True
+        else:
+            compression     = None
+            compression_opts= None
+            shuffle         = False
 
         # Create the output file if necessary
         if h5group is None:
@@ -193,7 +206,29 @@ class BinaryGroup(Mapping):
 
         # Loop over datasets in this group and write them out
         for dataset_name in self.datasets.keys():
-            h5group[dataset_name] = self.datasets[dataset_name][...]
+
+            # Dataset to write out
+            src_dset = self.datasets[dataset_name]
+
+            # Determine chunk size for output
+            if gzip > 0:
+                chunks = tuple([s if s < chunk_size else chunk_size for s in src_dset.shape])
+            else:
+                chunks = None
+                
+            # Write the dataset
+            if len(src_dset.shape) >= 1:
+                # Array dataset
+                h5group.create_dataset(dataset_name, data=src_dset[...],
+                                       shuffle=shuffle,
+                                       compression=compression,
+                                       compression_opts=compression_opts,
+                                       chunks=chunks)
+            else:
+                # Scalar dataset
+                h5group.create_dataset(dataset_name, data=src_dset[...])
+
+            # Copy attributes
             for attr_name in self.datasets[dataset_name].attrs.keys():
                 h5group[dataset_name].attrs[attr_name] = self.datasets[dataset_name].attrs[attr_name]
 
@@ -203,7 +238,7 @@ class BinaryGroup(Mapping):
             for attr_name in self.groups[group_name].attrs.keys():
                 new_group.attrs[attr_name] = self.groups[group_name].attrs[attr_name]
             # Recursively write sub-groups
-            self.groups[group_name].write_hdf5(h5group=new_group)
+            self.groups[group_name].write_hdf5(h5group=new_group, gzip=gzip)
 
         # Close the file if we created a new one
         if created:
