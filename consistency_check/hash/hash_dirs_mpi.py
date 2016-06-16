@@ -116,7 +116,7 @@ class DirectoryList:
         assert comm_rank == 0
         status = MPI.Status()
         while True:
-            if comm.iprobe(status=status):
+            if comm.Iprobe(status=status):
                 # Identify source of request
                 source = status.Get_source()
                 # Receive and store hashes of last directory processed, if any 
