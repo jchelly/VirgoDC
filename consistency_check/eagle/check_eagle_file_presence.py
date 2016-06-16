@@ -64,13 +64,13 @@ def check_dir(basedir, dirbase, filebase, nfiles_attr, isnap):
                 if os.path.basename(fname) in fnames:
                     files_ok += 1
     if files_ok == nfiles:
-        print "%20s %03d: OK      - %d of %d files present" % (dirbase, isnap, files_ok, nfiles)
+        print "%20s %03d: OK      - %d of %d %s files present" % (dirbase, isnap, files_ok, nfiles, filebase)
         return True
     elif nfiles == -1:
-        print "%20s %03d: MISSING - no files present!" % (dirbase, isnap)    
+        print "%20s %03d: MISSING - no %s files present!" % (dirbase, isnap, filebase)
         return False
     else:
-        print "%20s %03d: MISSING - %d of %d files present" % (dirbase, isnap, files_ok, nfiles)
+        print "%20s %03d: MISSING - %d of %d %s files present" % (dirbase, isnap, files_ok, nfiles, filebase)
         return False
 
 
