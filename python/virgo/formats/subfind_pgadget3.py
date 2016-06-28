@@ -10,7 +10,7 @@ from collections import Mapping
 from virgo.util.read_binary import BinaryFile
 from virgo.util.exceptions  import SanityCheckFailedException
 from virgo.util.read_multi import read_multi
-
+from virgo.formats.gadget_snapshot import GadgetSnapshotFile
 
 class GroupIDsFile(BinaryFile):
     """
@@ -99,7 +99,7 @@ class GroupTabFile(BinaryFile):
         # FoF group information
         ngroups = self["Ngroups"][...]
         self.add_dataset("GroupLen",          np.int32,        (ngroups,))
-        self.add_dataset("GroupOffset",       np.int32,        (ngroups,))
+        self.add_dataset("GroupOffset",       np.uint32,        (ngroups,)) # Assume uint32 to avoid overflow in AqA1
         self.add_dataset("GroupMass",         self.float_type, (ngroups,))
         self.add_dataset("GroupCofM",         self.float_type, (ngroups,3))
         self.add_dataset("GroupVel",          self.float_type, (ngroups,3))
@@ -191,7 +191,7 @@ class SubTabFile(BinaryFile):
         # FoF group information
         ngroups = self["Ngroups"][...]
         self.add_dataset("GroupLen",          np.int32,        (ngroups,))
-        self.add_dataset("GroupOffset",       np.int32,        (ngroups,))
+        self.add_dataset("GroupOffset",       np.uint32,        (ngroups,)) # Assume uint32 to avoid overflow in AqA1
         self.add_dataset("GroupMass",         self.float_type, (ngroups,))
         self.add_dataset("GroupPos",          self.float_type, (ngroups,3))
         self.add_dataset("Halo_M_Mean200",    self.float_type, (ngroups,))
@@ -415,9 +415,9 @@ class GroupOrderedSnapshot():
     where particles have been sorted by group membership.
     
     Note: P-Gadget3 outputs only contain enough information to
-    do this if there is only one particle type, so here we
-    assume that there are only type-1 particles (e.g. as in 
-    Millennium-2)
+    do this if there is only one particle type in the groups, so
+    here we assume that there are only type-1 particles in the FoF
+    and subfind groups (e.g. as in Millennium-2 or Aq-A-1).
     """
     def __init__(self, basedir, basename, isnap,
                  SO_VEL_DISPERSIONS=False,
@@ -490,11 +490,9 @@ class GroupOrderedSnapshot():
         self.num_snap_files = snap["Header"].attrs["NumFilesPerSnapshot"]
         self.npart_file = -np.ones((self.num_snap_files,), dtype=np.int64)
 
-        # Check that we only have high res DM particles
+        # Find total particle number
         nptot = (snap["Header"].attrs["NumPart_Total"].astype(np.int64) + 
                  (snap["Header"].attrs["NumPart_Total_HighWord"].astype(np.int64) << 32))
-        if nptot[0] != 0 or np.any(nptot[2:] != 0):
-            raise NotImplementedError("Can only read group ordered snapshots with one particle type!")
 
         # Calculate index of first fof group in each file
         self.first_fof_in_file = np.cumsum(self.nfof_file) - self.nfof_file
@@ -520,7 +518,7 @@ class GroupOrderedSnapshot():
 
     def read_fof_group(self, grnr):
         """
-        Read pos, vel, type for particles in the specified FoF group
+        Read pos, vel, id for particles in the specified FoF group
 
         grnr can either be a single integer giving the position of the group
         in the full catalogue, or a two element sequence with the file number
@@ -539,7 +537,7 @@ class GroupOrderedSnapshot():
         # Output will be a dictionary with Coordinates, ParticleIDs etc.
         result = {}
 
-        # Determine which particles we need to read for each type
+        # Determine which particles we need to read
         first_in_fof = self.fof_offset[ifof]
         last_in_fof  = first_in_fof + self.foflen[ifof] - 1
         
