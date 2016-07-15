@@ -17,9 +17,49 @@ else:
 class GadgetBinarySnapshotFile(BinaryFile):
     """
     Class which provides a h5py-like interface to a binary snapshot file
+
+    By default this can read the following quantities:
+
+      Coordinates
+      Velocities
+      Masses
+      ParticleIDs
+      InternalEnergy
+      Density
+      SmoothingLength
+
+    Extra datasets can be specified via the "extra" parameter,
+    which should be a sequence of tuples. Each tuple consists of
+
+    (name, typestr, shape, ptypes)
+    
+    where the components are
+
+    name    : name of the dataset
+    typestr : string, either "float" or "int" depending on type of data.
+              Number of bytes per quantity is determined from record markers.
+    shape   : shape of the data for ONE particle:
+              should be () for scalar quanities, (3,) for vector quantities
+    ptypes  : sequence of six booleans, true for particle types which have this quantity
+
+    These datasets should be specified in the order in which they
+    appear in the file.
+
     """
-    def __init__(self, fname):
+    def __init__(self, fname, extra=None):
         BinaryFile.__init__(self, fname)
+
+        # Make full list of extra datasets to read (i.e. those in addition to pos, vel, ids, mass)
+        # First list standard extra fields for gas particles - these also serve as an example of how to
+        # set the "extra" parameter.
+        all_extra = (
+            ("InternalEnergy",  "float", (), (True, False, False, False, False, False)),
+            ("Density",         "float", (), (True, False, False, False, False, False)),
+            ("SmoothingLength", "float", (), (True, False, False, False, False, False)),
+            )
+        # Add any user specified fields
+        if extra is not None:
+            all_extra += extra
         
         # Read the header record marker and establish endian-ness
         self.add_dataset("record_markers/header_start", np.int32)
@@ -130,51 +170,77 @@ class GadgetBinarySnapshotFile(BinaryFile):
             if irec != np.dtype(mass_type).itemsize*nmass:
                 raise IOError("Mass end of record marker is incorrect!")
 
+        # Add any extra datasets
+        if all_extra is not None:
+            for(name, typestr, shape, ptypes) in all_extra:
 
-class GadgetSnapshotFile(Mapping):
-    """
-    Class to read Gadget snapshot files.
+                # Calculate number of particles we expect in this dataset
+                nextra = sum(npart_type[np.asarray(ptypes, dtype=np.bool)])
 
-    This is a thin wrapper around a GadgetBinarySnapshotFile or a h5py.File
-    object, depending on the snapshot format.
+                # Calculate number of numbers per particle
+                n_per_part = 1
+                for s in shape:
+                    n_per_part *= s
+
+                # Read start of record marker
+                self.add_dataset("record_markers/%s_start" % name, np.int32)
+                irec = self["record_markers/%s_start" % name][...]
+
+                # Determine bytes per quantitiy
+                nbytes = irec / (n_per_part*nextra)
+                if (nbytes != 4 and nbytes != 8) or nbytes*n_per_part*nextra != irec:
+                    raise IOError("%s record has unexpected length!" % name)
+
+                # Determine data type for this record
+                if typestr == "int":
+                    if nbytes==4:
+                        dtype = np.int32
+                    else:
+                        dtype = np.int64
+                elif typestr == "float":
+                    if nbytes==4:
+                        dtype = np.float32
+                    else:
+                        dtype = np.float64
+                else:
+                    raise ValueError("typestr parameter should be 'int' or 'float'")
+
+                # Loop over particle types and add datasets
+                for i in range(6):
+                    if ptypes[i] and npart_type[i] > 0:
+                        full_shape = (npart_type[i],)+tuple(shape)
+                        self.add_dataset("PartType%i/%s" % (i, name), dtype, full_shape)
+
+                # Read end of record marker
+                self.add_dataset("record_markers/%s_end" % name, np.int32)
+                irec = self["record_markers/%s_end" % name][...]
+                if irec != n_per_part * np.dtype(dtype).itemsize * nextra:
+                    raise IOError("%s end of record marker is incorrect!" % name)
+
+                        
+def open(fname, extra=None):
     """
-    def __init__(self, fname):
-        snap = None
-        # Try to open it as a HDF5 file
-        if have_hdf5:
-            try:
-                snap = h5py.File(fname, "r")
-                np = snap["Header"].attrs["NumPart_ThisFile"]
-            except IOError:
-                pass
-            else:
-                self.format = "HDF5"
-        # If that failed, try binary type 1
-        if snap is None:
-            try:
-                snap = GadgetBinarySnapshotFile(fname)
-            except IOError:
-                pass
-            else:
-                self.format = "BINARY1"
-        if snap is not None:
-            self.file  = snap
-            self.fname = fname
+    Open a Gadget snapshot file which may be in binary or HDF5 format.
+
+    Parameter "extra" specifies any additional datasets
+    to read in the case of a binary snapshot.
+    """
+    snap = None
+    # Try to open it as a HDF5 file
+    if have_hdf5:
+        try:
+            snap = h5py.File(fname, "r")
+            np = snap["Header"].attrs["NumPart_ThisFile"]
+        except IOError:
+            pass
         else:
-            raise IOError("Unable to open the file as binary type 1 or HDF5!")
-        
-    def __len__(self):
-        return self.file.__len__()
-
-    def __getitem__(self, key):
-        return self.file[key]
-
-    def __iter__(self):
-        for item in self.file:
-            yield item
-
-    def __getattr__(self, key):
-        return self.file.__dict__[key]
-
-    def __repr__(self):
-        return 'GadgetSnapshotFile("%s")' % self.fname
+            return snap
+    # If that failed, try binary type 1
+    if snap is None:
+        try:
+            snap = GadgetBinarySnapshotFile(fname, extra=extra)
+        except IOError:
+            pass
+        else:
+            return snap
+    raise IOError("Unable to open the file %s as binary type 1 or HDF5!" % fname)
