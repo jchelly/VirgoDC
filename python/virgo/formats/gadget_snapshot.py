@@ -49,21 +49,8 @@ class GadgetBinarySnapshotFile(BinaryFile):
     def __init__(self, fname, extra=None):
         BinaryFile.__init__(self, fname)
 
-        # Make full list of extra datasets to read (i.e. those in addition to pos, vel, ids, mass)
-        # First list standard extra fields for gas particles - these also serve as an example of how to
-        # set the "extra" parameter.
-        all_extra = (
-            ("InternalEnergy",  "float", (), (True, False, False, False, False, False)),
-            ("Density",         "float", (), (True, False, False, False, False, False)),
-            ("SmoothingLength", "float", (), (True, False, False, False, False, False)),
-            )
-        # Add any user specified fields
-        if extra is not None:
-            all_extra += extra
-        
         # Read the header record marker and establish endian-ness
-        self.add_dataset("record_markers/header_start", np.int32)
-        irec = self["record_markers/header_start"][...]
+        irec = self.read_and_skip(np.int32)
         if irec == 256:
             self.enable_byteswap(False)
         elif irec == 65536:
@@ -96,126 +83,67 @@ class GadgetBinarySnapshotFile(BinaryFile):
         npart      = sum(npart_type)
 
         # Check end of header marker
-        self.add_dataset("record_markers/header_end", np.int32)
-        if self["record_markers/header_end"][...] != 256:
+        irec = self.read_and_skip(np.int32)
+        if irec != 256:
             raise IOError("Header end of record marker is incorrect!")
 
-        # Determine type of positions and add blocks
-        self.add_dataset("record_markers/pos_start", np.int32)
-        irec = self["record_markers/pos_start"][...]
-        if npart*3*4 == irec:
-            pos_type = np.float32
-        elif npart*3*8 == irec:
-            pos_type = np.float64
-        else:
-            raise IOError("Positions record length is incorrect!")
-        for i in range(6):
-            if npart_type[i] > 0:
-                self.add_dataset("PartType%i/Coordinates" % i, pos_type, (npart_type[i],3))
-        self.add_dataset("record_markers/pos_end", np.int32)
-        irec = self["record_markers/pos_end"][...]
-        if irec != np.dtype(pos_type).itemsize*3*npart:
-            raise IOError("Positions end of record marker is incorrect!")
+        # Make full list of datasets to read
+        all_datasets = (
+            ("Coordinates",     "float", (3,), (True,)*6),
+            ("Velocities",      "float", (3,), (True,)*6),
+            ("ParticleIDs",     "int",   (),   (True,)*6),
+            ("Masses",          "float", (),   masstable==0),
+            ("InternalEnergy",  "float", (),   (True, False, False, False, False, False)),
+            ("Density",         "float", (),   (True, False, False, False, False, False)),
+            ("SmoothingLength", "float", (),   (True, False, False, False, False, False)),
+            )
+        # Add any user specified fields
+        if extra is not None:
+            all_datasets += extra
+        
+        # Determine what datasets are present in this file
+        for(name, typestr, shape, ptypes) in all_datasets:
 
-        # Determine type of velocities and add blocks
-        self.add_dataset("record_markers/vel_start", np.int32)
-        irec = self["record_markers/vel_start"][...]
-        if npart*3*4 == irec:
-            vel_type = np.float32
-        elif npart*3*8 == irec:
-            vel_type = np.float64
-        else:
-            raise IOError("Velocities record length is incorrect!")
-        for i in range(6):
-            if npart_type[i] > 0:
-                self.add_dataset("PartType%i/Velocities" % i, vel_type, (npart_type[i],3))
-        self.add_dataset("record_markers/vel_end", np.int32)
-        irec = self["record_markers/vel_end"][...]
-        if irec != np.dtype(vel_type).itemsize*3*npart:
-            raise IOError("Velocities end of record marker is incorrect!")
+            # Calculate number of particles we expect in this dataset
+            nextra = sum(npart_type[np.asarray(ptypes, dtype=np.bool)])
 
-        # Determine type of IDs and add blocks
-        self.add_dataset("record_markers/ids_start", np.int32)
-        irec = self["record_markers/ids_start"][...]
-        if npart*4 == irec:
-            ids_type = np.int32
-        elif npart*8 == irec:
-            ids_type = np.int64
-        else:
-            raise IOError("IDs record length is incorrect!")
-        for i in range(6):
-            if npart_type[i] > 0:
-                self.add_dataset("PartType%i/ParticleIDs" % i, ids_type, (npart_type[i],))
-        self.add_dataset("record_markers/ids_end", np.int32)
-        irec = self["record_markers/ids_end"][...]
-        if irec != np.dtype(ids_type).itemsize*npart:
-            raise IOError("IDs end of record marker is incorrect!")
+            # Calculate number of numbers per particle
+            n_per_part = 1
+            for s in shape:
+                n_per_part *= s
 
-        # Determine type of masses and add blocks (if any)
-        nmass = sum(npart_type[masstable==0.0])
-        if nmass > 0:
-            self.add_dataset("record_markers/mass_start", np.int32)
-            irec = self["record_markers/mass_start"][...]
-            if nmass*4 == irec:
-                mass_type = np.float32
-            elif nmass*8 == irec:
-                mass_type = np.float64
-            else:
-                raise IOError("Mass record length is incorrect!")
-            for i in range(6):
-                if npart_type[i] > 0 and masstable[i] == 0:
-                    self.add_dataset("PartType%i/Masses" % i, mass_type, (npart_type[i],))
-            self.add_dataset("record_markers/mass_end", np.int32)
-            irec = self["record_markers/mass_end"][...]
-            if irec != np.dtype(mass_type).itemsize*nmass:
-                raise IOError("Mass end of record marker is incorrect!")
+            # Read start of record marker
+            irec = self.read_and_skip(np.int32)
 
-        # Add any extra datasets
-        if all_extra is not None:
-            for(name, typestr, shape, ptypes) in all_extra:
+            # Determine bytes per quantitiy
+            nbytes = irec / (n_per_part*nextra)
+            if (nbytes != 4 and nbytes != 8) or nbytes*n_per_part*nextra != irec:
+                raise IOError("%s record has unexpected length!" % name)
 
-                # Calculate number of particles we expect in this dataset
-                nextra = sum(npart_type[np.asarray(ptypes, dtype=np.bool)])
-
-                # Calculate number of numbers per particle
-                n_per_part = 1
-                for s in shape:
-                    n_per_part *= s
-
-                # Read start of record marker
-                self.add_dataset("record_markers/%s_start" % name, np.int32)
-                irec = self["record_markers/%s_start" % name][...]
-
-                # Determine bytes per quantitiy
-                nbytes = irec / (n_per_part*nextra)
-                if (nbytes != 4 and nbytes != 8) or nbytes*n_per_part*nextra != irec:
-                    raise IOError("%s record has unexpected length!" % name)
-
-                # Determine data type for this record
-                if typestr == "int":
-                    if nbytes==4:
-                        dtype = np.int32
-                    else:
-                        dtype = np.int64
-                elif typestr == "float":
-                    if nbytes==4:
-                        dtype = np.float32
-                    else:
-                        dtype = np.float64
+            # Determine data type for this record
+            if typestr == "int":
+                if nbytes==4:
+                    dtype = np.int32
                 else:
-                    raise ValueError("typestr parameter should be 'int' or 'float'")
+                    dtype = np.int64
+            elif typestr == "float":
+                if nbytes==4:
+                    dtype = np.float32
+                else:
+                    dtype = np.float64
+            else:
+                raise ValueError("typestr parameter should be 'int' or 'float'")
 
-                # Loop over particle types and add datasets
-                for i in range(6):
-                    if ptypes[i] and npart_type[i] > 0:
-                        full_shape = (npart_type[i],)+tuple(shape)
-                        self.add_dataset("PartType%i/%s" % (i, name), dtype, full_shape)
+            # Loop over particle types and add datasets
+            for i in range(6):
+                if ptypes[i] and npart_type[i] > 0:
+                    full_shape = (npart_type[i],)+tuple(shape)
+                    self.add_dataset("PartType%i/%s" % (i, name), dtype, full_shape)
 
-                # Read end of record marker
-                self.add_dataset("record_markers/%s_end" % name, np.int32)
-                irec = self["record_markers/%s_end" % name][...]
-                if irec != n_per_part * np.dtype(dtype).itemsize * nextra:
-                    raise IOError("%s end of record marker is incorrect!" % name)
+            # Read end of record marker
+            irec = self.read_and_skip(np.int32)
+            if irec != n_per_part * np.dtype(dtype).itemsize * nextra:
+                raise IOError("%s end of record marker is incorrect!" % name)
 
                         
 def open(fname, extra=None):
