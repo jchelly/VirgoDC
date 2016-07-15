@@ -106,44 +106,45 @@ class GadgetBinarySnapshotFile(BinaryFile):
 
             # Calculate number of particles we expect in this dataset
             nextra = sum(npart_type[np.asarray(ptypes, dtype=np.bool)])
+            if nextra > 0:
 
-            # Calculate number of numbers per particle
-            n_per_part = 1
-            for s in shape:
-                n_per_part *= s
+                # Calculate number of numbers per particle
+                n_per_part = 1
+                for s in shape:
+                    n_per_part *= s
 
-            # Read start of record marker
-            irec = self.read_and_skip(np.int32)
+                # Read start of record marker
+                irec = self.read_and_skip(np.int32)
 
-            # Determine bytes per quantitiy
-            nbytes = irec / (n_per_part*nextra)
-            if (nbytes != 4 and nbytes != 8) or nbytes*n_per_part*nextra != irec:
-                raise IOError("%s record has unexpected length!" % name)
+                # Determine bytes per quantitiy
+                nbytes = irec / (n_per_part*nextra)
+                if (nbytes != 4 and nbytes != 8) or nbytes*n_per_part*nextra != irec:
+                    raise IOError("%s record has unexpected length!" % name)
 
-            # Determine data type for this record
-            if typestr == "int":
-                if nbytes==4:
-                    dtype = np.int32
+                # Determine data type for this record
+                if typestr == "int":
+                    if nbytes==4:
+                        dtype = np.int32
+                    else:
+                        dtype = np.int64
+                elif typestr == "float":
+                    if nbytes==4:
+                        dtype = np.float32
+                    else:
+                        dtype = np.float64
                 else:
-                    dtype = np.int64
-            elif typestr == "float":
-                if nbytes==4:
-                    dtype = np.float32
-                else:
-                    dtype = np.float64
-            else:
-                raise ValueError("typestr parameter should be 'int' or 'float'")
+                    raise ValueError("typestr parameter should be 'int' or 'float'")
 
-            # Loop over particle types and add datasets
-            for i in range(6):
-                if ptypes[i] and npart_type[i] > 0:
-                    full_shape = (npart_type[i],)+tuple(shape)
-                    self.add_dataset("PartType%i/%s" % (i, name), dtype, full_shape)
+                # Loop over particle types and add datasets
+                for i in range(6):
+                    if ptypes[i] and npart_type[i] > 0:
+                        full_shape = (npart_type[i],)+tuple(shape)
+                        self.add_dataset("PartType%i/%s" % (i, name), dtype, full_shape)
 
-            # Read end of record marker
-            irec = self.read_and_skip(np.int32)
-            if irec != n_per_part * np.dtype(dtype).itemsize * nextra:
-                raise IOError("%s end of record marker is incorrect!" % name)
+                # Read end of record marker
+                irec = self.read_and_skip(np.int32)
+                if irec != n_per_part * np.dtype(dtype).itemsize * nextra:
+                    raise IOError("%s end of record marker is incorrect!" % name)
 
                         
 def open(fname, extra=None):
