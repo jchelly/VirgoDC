@@ -9,7 +9,7 @@ from collections import Mapping
 from virgo.util.read_binary import BinaryFile
 from virgo.util.exceptions  import SanityCheckFailedException
 from virgo.util.read_multi import read_multi
-from virgo.formats.gadget_snapshot import GadgetSnapshotFile
+from virgo.formats import gadget_snapshot
 
 class SubTabFile(BinaryFile):
     """
@@ -221,7 +221,7 @@ class GroupOrderedSnapshot():
         """
         fname = "%s/snapdir_%03d/%s_%03d.%d" % (self.basedir, self.isnap, 
                                                 self.basename, self.isnap, ifile)
-        return GadgetSnapshotFile(fname) 
+        return gadget_snapshot.open(fname) 
     
     def open_subtab_file(self, ifile):
         """
