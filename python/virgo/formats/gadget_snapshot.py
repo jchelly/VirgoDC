@@ -102,6 +102,7 @@ class GadgetBinarySnapshotFile(BinaryFile):
             all_datasets += extra
         
         # Determine what datasets are present in this file
+        count_records = 0
         for(name, typestr, shape, ptypes) in all_datasets:
 
             # Calculate number of particles we expect in this dataset
@@ -113,8 +114,17 @@ class GadgetBinarySnapshotFile(BinaryFile):
                 for s in shape:
                     n_per_part *= s
 
-                # Read start of record marker
-                irec = self.read_and_skip(np.int32)
+                # Check if there's another record in the file
+                try:
+                    irec = self.read_and_skip(np.int32)
+                except IOError:
+                    if count_records < 3:
+                        # pos, vel, ids should always be present
+                        raise
+                    else:
+                        break
+                else:
+                    count_records += 1
 
                 # Determine bytes per quantitiy
                 nbytes = irec / (n_per_part*nextra)

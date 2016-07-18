@@ -426,9 +426,10 @@ class BinaryFile(BinaryGroup):
     def read_and_skip(self, dtype, shape=()):
         tmp = BinaryDataset(self.fname, dtype, self.offset, shape, None)
         tmp.endian = self.endian
+        data = tmp[()]
         self.offset += tmp.nbytes
         self.all_blocks.append(tmp)
-        return tmp[()]
+        return data
 
     def set_endian(self, endian):
         """
