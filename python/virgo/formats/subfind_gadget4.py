@@ -132,8 +132,8 @@ class GroupCatalogue(Mapping):
         del f
         
         # Read the catalogue data
-        self._items = read_multi(SubTabFile, fname_fmt, np.arange(nfiles), datasets, 
-                                 id_bytes=id_bytes)
+        self._items = read_multi(fname_fmt, np.arange(nfiles), datasets, 
+                                 file_type=SubTabFile, id_bytes=id_bytes)
 
     def __getitem__(self, key):
         return self._items[key]

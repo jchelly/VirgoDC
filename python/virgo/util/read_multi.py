@@ -1,13 +1,18 @@
 #!/bin/env python
 
+try:
+    import h5py
+except ImportError:
+    h5py=None
+
 import numpy as np
 from collections import OrderedDict
 
-def read_multi(file_type, format_str, idx, datasets, axis=0, *args, **kwargs):
+def read_multi(format_str, idx, datasets, file_type=None, axis=0, *args, **kwargs):
     """
     Read and concatenate arrays from the specified set of files.
 
-    file_type : class to use to read each file
+    file_type : class to use to read each file. Assume hdf5 file if file_type=None.
     format_str: format string such that file names are given by
                 format_str % {'i':i}
     idx       : sequence with indexes of files to read
@@ -33,8 +38,13 @@ def read_multi(file_type, format_str, idx, datasets, axis=0, *args, **kwargs):
     # Loop over files
     for i in idx:
 
-        # Open file, passing in any extra args
-        f = file_type(format_str % {'i':i}, *args, **kwargs)
+        # Open file
+        if file_type is None:
+            # Type not specified, assume hdf5
+            f = h5py.File(format_str % {'i':i}, "r")
+        else:
+            # Have been given a class for reading this file type
+            f = file_type(format_str % {'i':i}, *args, **kwargs)
 
         # Read the datasets
         for name in datasets:
