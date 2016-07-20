@@ -58,7 +58,8 @@ def assign_ranges(array, offset, length, value):
         array[mask,...] = np.repeat(value, length, axis=0)
 
 
-def sum_ranges(array, offset, length, dtype=None):
+def sum_ranges(array, offset, length, dtype=None, weight=None,
+               normalize=True):
     """
     Calculate sum of elements of array in the ranges
     given by offset and length arrays. I.e. result is
@@ -73,6 +74,11 @@ def sum_ranges(array, offset, length, dtype=None):
     sum is done along the first dimension.
 
     Ranges to sum must be in sorted order and not overlap.
+
+    If weight is not None then we do a weighted sum. Weight
+    should be a 1D array of length array.shape[0]. Result
+    for each range is divided by sum of weights in that range
+    if normalize=True.
     """
     
     # Ensure input is an array
@@ -86,7 +92,19 @@ def sum_ranges(array, offset, length, dtype=None):
     mask = np.zeros(array.shape[0], dtype=np.bool)
     assign_ranges(mask, offset, length, np.ones(offset.shape[0], dtype=np.bool))
     
-    # Return sum of ranges
-    return np.add.reduceat(array[mask,...], 
-                           np.cumsum(length)-length,
-                           axis=0, dtype=dtype)
+    if weight is None:
+        # No weight, so just return sum of ranges
+        return np.add.reduceat(array[mask,...], 
+                               np.cumsum(length)-length,
+                               axis=0, dtype=dtype)
+    else:
+        # Weighted sum.
+        a_x_w     = (array[mask,...].T*weight[mask]).T # transpose so we can broadcast weight
+        sum_a_x_w = np.add.reduceat(a_x_w, np.cumsum(length)-length,
+                                    axis=0, dtype=dtype)
+        if normalize:
+            sum_w     = np.add.reduceat(weight[mask], np.cumsum(length)-length,
+                                        axis=0, dtype=dtype)
+            return (sum_a_x_w.T / sum_w).T
+        else:
+            return sum_a_x_w
