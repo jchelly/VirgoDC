@@ -3,4 +3,6 @@ __all__ = [
     "peano",
     "exceptions",
     "read_multi",
-    "match"]
+    "match",
+    "ranges",
+    ]
