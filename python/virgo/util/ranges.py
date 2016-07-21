@@ -15,9 +15,6 @@ def assign_ranges(array, offset, length, value):
     to refer to the first dimension.
     """
 
-    # Ensure input is an array
-    array = np.asarray(array)
-
     # Sanity check ranges
     offset = np.asarray(offset).astype(np.intp)
     length = np.asarray(length).astype(np.intp)
