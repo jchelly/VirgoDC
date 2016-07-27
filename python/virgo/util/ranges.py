@@ -76,6 +76,9 @@ def sum_ranges(array, offset, length, dtype=None, weight=None,
     should be a 1D array of length array.shape[0]. Result
     for each range is divided by sum of weights in that range
     if normalize=True.
+
+    If weight=None but normalize=True then we divide
+    by the number of elements in each range.
     """
     
     # Ensure input is an array
@@ -90,10 +93,16 @@ def sum_ranges(array, offset, length, dtype=None, weight=None,
     assign_ranges(mask, offset, length, np.ones(offset.shape[0], dtype=np.bool))
     
     if weight is None:
-        # No weight, so just return sum of ranges
-        return np.add.reduceat(array[mask,...], 
-                               np.cumsum(length)-length,
-                               axis=0, dtype=dtype)
+        # No weights
+        sum_a = np.add.reduceat(array[mask,...], 
+                                np.cumsum(length)-length,
+                                axis=0, dtype=dtype)
+        if normalize:
+            # Return sum divided by number of elements
+            return (sum_a.T / length).T
+        else:
+            # Return sum of ranges
+            return sum_a
     else:
         # Weighted sum.
         a_x_w     = (array[mask,...].T*weight[mask]).T # transpose so we can broadcast weight
