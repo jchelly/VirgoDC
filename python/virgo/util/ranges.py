@@ -56,7 +56,7 @@ def assign_ranges(array, offset, length, value):
 
 
 def sum_ranges(array, offset, length, dtype=None, weight=None,
-               normalize=True):
+               normalize=False):
     """
     Calculate sum of elements of array in the ranges
     given by offset and length arrays. I.e. result is
