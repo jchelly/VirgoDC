@@ -30,7 +30,7 @@ def check_dir(basedir, dirbase, filebase, isnap, get_nfiles_func):
         # Try to open first file to determine number of files
         fname = pgadget3_filename(basedir, dirbase, filebase, isnap, 0)
         nfiles = get_nfiles_func(fname)
-    except IOError:
+    except Exception:
         pass
     else:
         # Get directory listing to check presence of remaining files -
@@ -69,7 +69,7 @@ def check_pgadget3_run(basedir, snapbase, max_num, first_num, step):
     for isnap in range(first_num, max_num+1, step):
 
         # Check snapshot data
-        get_nfiles_func = lambda fname : gadget_snapshot.GadgetSnapshotFile(fname)["Header"].attrs["NumFilesPerSnapshot"]
+        get_nfiles_func = lambda fname : gadget_snapshot.open(fname)["Header"].attrs["NumFilesPerSnapshot"]
         if not(check_dir(basedir, "snapdir", snapbase, isnap, get_nfiles_func)):
             count_missing["snapshot"] += 1
         count_expected["snapshot"] += 1
