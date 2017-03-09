@@ -14,24 +14,16 @@ class SubTabFile(BinaryFile):
     """
     def __init__(self, fname, 
                  SO_VEL_DISPERSIONS=False,
-                 SO_BAR_INFO=False,
-                 WRITE_SUB_IN_SNAP_FORMAT=False,
+                 SUB_SHAPES=False,
                  id_bytes=4, float_bytes=4,
                  *args):
         BinaryFile.__init__(self, fname, *args)
 
-        # Haven't implemented these
-        if WRITE_SUB_IN_SNAP_FORMAT:
-            raise NotImplementedError("Subfind outputs in type 2 binary snapshot format are not implemented")
-        if SO_BAR_INFO:
-            raise NotImplementedError("Subfind outputs with SO_BAR_INFO set are not implemented")
-
         # These parameters, which correspond to macros in Gadget's Config.sh,
         # modify the file format. The file cannot be read correctly unless these
         # are known - their values are not stored in the output.
-        self.WRITE_SUB_IN_SNAP_FORMAT = WRITE_SUB_IN_SNAP_FORMAT
-        self.SO_VEL_DISPERSIONS       = SO_VEL_DISPERSIONS
-        self.SO_BAR_INFO              = SO_BAR_INFO
+        self.SO_VEL_DISPERSIONS = SO_VEL_DISPERSIONS
+        self.SUB_SHAPES         = SUB_SHAPES
 
         # We also need to know the data types used for particle IDs
         # and floating point subhalo properties (again, this can't be read from the file).
@@ -100,6 +92,81 @@ class SubTabFile(BinaryFile):
         self.add_dataset("SubVmax",        self.float_type, (nsubgroups,))
         self.add_dataset("SubRVmax",       self.float_type, (nsubgroups,))
         self.add_dataset("SubHalfMass",    self.float_type, (nsubgroups,))
+        if SUB_SHAPES:
+            self.add_dataset("SubShape", self.float_type, (nsubgroups,6))
+        self.add_dataset("SubBindingEnergy",   self.float_type, (nsubgroups,))
+        self.add_dataset("SubPotentialEnergy", self.float_type, (nsubgroups,))
+        self.add_dataset("SubProfile",         self.float_type, (nsubgroups,9))
+        
+    def sanity_check(self):
+
+        # Check file has the expected size (e.g. in case ID type is wrong)
+        if not(self.all_bytes_used()):
+            raise SanityCheckFailedException("File size is incorrect!")
+        
+        totnids       = self["TotNids"][...]
+        totngroups    = self["TotNgroups"][...]
+        totnsubgroups = self["TotNsubgroups"][...]
+        
+        # Checks on header
+        if totnids < 0 or totngroups < 0 or totnsubgroups < 0:
+            raise SanityCheckFailedException("Negative number of groups/subgroups/IDs")
+
+        # Checks on group properties
+        if np.any(self["GroupLen"][...] < 0):
+            raise SanityCheckFailedException("Found group with non-positive length!")
+        if totnids < 2**31:
+            # Offsets overflow if we have too many particles (e.g. Millennium-2), 
+            # so this test is expected to fail in that case
+            if np.any(self["GroupOffset"][...] < 0) or np.any(self["GroupOffset"][...]+self["GroupLen"][...] > totnids):
+                raise SanityCheckFailedException("Found group with offset out of range!")
+
+        # Check pointers from groups to subgroups are sane
+        firstsub = self["FirstSub"][...]
+        nsubs    = self["Nsubs"][...]
+        if np.any(nsubs < 0):
+            raise SanityCheckFailedException("Negative number of subgroups in group!")
+        ind = nsubs > 0
+        if np.any(firstsub[ind] < 0) or np.any(firstsub[ind]+nsubs[ind] > totnsubgroups):
+            raise SanityCheckFailedException("Found group with subgroup index out of range!")
+
+        # Check some group properties that we expect to be finite and non-negative
+        for prop in ("Halo_M_Mean200", "Halo_M_Crit200", "Halo_M_TopHat200", "GroupVelDisp"):
+            data = self[prop][...]
+            if not(np.all(np.isfinite(data))):
+                raise Exception("Found non-finite value in dataset %s" % prop)
+            if not(np.all(data >= 0.0)):
+                raise Exception("Found negative value in dataset %s" % prop)
+
+        # Checks on subgroup properties
+        if np.any(self["SubLen"][...] < 0):
+            raise SanityCheckFailedException("Found subgroup with non-positive length!")
+        if totnids < 2**31:
+            # Offsets overflow if we have too many particles (e.g. Millennium-2),
+            # so this test is expected to fail in that case
+            if np.any(self["SubOffset"][...] < 0) or np.any(self["SubOffset"][...]+self["SubLen"][...] > totnids):
+                raise SanityCheckFailedException("Found group with offset out of range!")
+
+        # Check some subgroup properties that we expect to be finite and (in some cases) non-negative
+        for prop in ("SubPos","SubVel","SubCofM","SubSpin","SubVelDisp",
+                     "SubVmax","SubRVmax","SubHalfMass"):
+            data = self[prop][...]
+            if not(np.all(np.isfinite(data))):
+                raise Exception("Found non-finite value in dataset %s" % prop)
+            if not(np.all(data >= 0.0)) and prop in ("SubMass","SubVelDisp","SubVmax","SubRVmax","SubHalfMass"):
+                raise Exception("Found negative value in dataset %s" % prop)
+
+        # Check SubGrNr is in range and in the expected order
+        subgrnr = self["SubGrNr"][...]
+        if np.any(subgrnr<0) or np.any(subgrnr>=totngroups):
+            raise SanityCheckFailedException("Subgroup's SubGrNr out of range!")
+        if subgrnr.shape[0] > 1:
+            if np.any(subgrnr[1:] < subgrnr[:-1]):
+                raise SanityCheckFailedException("Subgroup SubGrNr's are not in ascending order!")
+
+
+
+
 
 
 class SubIDsFile(BinaryFile):
@@ -136,3 +203,15 @@ class SubIDsFile(BinaryFile):
 
         # Add dataset with particle IDs
         self.add_dataset("GroupIDs",   self.id_type, (Nids,))
+
+    def sanity_check(self):
+
+        # Check file has the expected size (e.g. in case ID type is wrong)
+        if not(self.all_bytes_used()):
+            raise SanityCheckFailedException("File size is incorrect!")
+
+        # Check that IDs don't contain duplicates
+        ids = self["GroupIDs"][...]
+        idx, counts = np.unique(ids, return_counts=True)
+        if np.any(counts != 1):
+            raise SanityCheckFailedException("Found duplicate IDs!")
