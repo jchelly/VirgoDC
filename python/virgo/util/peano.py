@@ -55,9 +55,9 @@ for rotation in range(24):
         for bity in range(2):
             for bitz in range(2):
                 quad = quadrants[rotation,bitx,bity,bitz]
-		quadrants_inverse_x[rotation,quad] = bitx
-		quadrants_inverse_y[rotation,quad] = bity
-		quadrants_inverse_z[rotation,quad] = bitz
+                quadrants_inverse_x[rotation,quad] = bitx
+                quadrants_inverse_y[rotation,quad] = bity
+                quadrants_inverse_z[rotation,quad] = bitz
 
 
 def peano_hilbert_keys(ix, iy, iz, bits):
