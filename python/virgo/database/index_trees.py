@@ -140,7 +140,7 @@ def find_main_progenitor(nodeIndex, descendantIndex, snapnum, mbranch):
     min_prog_snap = np.zeros_like(mbranch, dtype=np.int32) + 100
     for i in idx:
         j = ptr[i]
-        if j > 0:
+        if j >= 0:
             if mbranch[i] > mbranch_max[j]:
                 mbranch_max[j] = mbranch[i]
                 mainprog[j] = nodeIndex[i]
