@@ -13,7 +13,7 @@ class HalosFile(BinaryFile):
     Class for reading halos*.bin files from Rockstar
     """
     def __init__(self, fname, *args):
-        BinaryFile.__init__(self, fname, *args)
+        super(HalosFile, self).__init__(fname, *args)
         
         # Define header
         self.add_attribute("Header/magic",  np.uint64)
