@@ -401,6 +401,12 @@ class BinaryFile(BinaryGroup):
         self.all_blocks = []
         self.fortran_record = None
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self ,type, value, traceback):
+        return False
+
     def _add_block(self, name, dtype, shape, is_attr):
 
         # Add the new data block
