@@ -1,8 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include "hdf5.h"
-#include "hdf5_hl.h" 
 
 struct io_header
 {
