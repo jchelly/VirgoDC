@@ -71,9 +71,9 @@ def peano_hilbert_keys(ix, iy, iz, bits):
     If ix, iy and iz are sequences, key will be a numpy array
     with the same number of elemnts.
     """
-    x = asarray(ix, dtype=int)
-    y = asarray(iy, dtype=int)
-    z = asarray(iz, dtype=int)
+    x = asarray(ix, dtype=int32)
+    y = asarray(iy, dtype=int32)
+    z = asarray(iz, dtype=int32)
 
     mask     = 1 << (bits - 1)
     key      = zeros(x.shape, dtype=int64)
