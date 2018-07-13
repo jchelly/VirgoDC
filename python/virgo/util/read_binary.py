@@ -105,6 +105,10 @@ class BinaryAttrs(Mapping):
         for key in self._items.keys():
             yield key
 
+    def close(self):
+        for key in self._items.keys():
+            self._items[key].close()
+
 
 class BinaryGroup(Mapping):
     """
@@ -244,6 +248,14 @@ class BinaryGroup(Mapping):
         if created:
             h5group.close()
 
+    def close(self):
+        """Close all contained groups, datasets, attributes"""
+        self.attrs.close()
+        for name in self.datasets:
+            self.datasets[name].close()
+        for name in self.groups:
+            self.groups[name].close()
+        
 
 class BinaryDataset:
     """
@@ -370,6 +382,9 @@ class BinaryDataset:
         else:
             raise TypeError("Can't iterate a scalar dataset!")
         
+    def close(self):
+        if self.file is not None and not(self.file.closed):
+            self.file.close()
 
 
 class BinaryFile(BinaryGroup):
@@ -405,6 +420,7 @@ class BinaryFile(BinaryGroup):
         return self
 
     def __exit__(self ,type, value, traceback):
+        self.close()
         return False
 
     def _add_block(self, name, dtype, shape, is_attr):
