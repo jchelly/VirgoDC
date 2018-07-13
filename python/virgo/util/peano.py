@@ -6,6 +6,8 @@ from numpy import *
 # Function to calculate P-H keys
 #
 
+blocksize = 10000
+
 quadrants = asarray([
   0, 7, 1, 6, 3, 4, 2, 5,
   7, 4, 6, 5, 0, 3, 1, 2,
@@ -60,7 +62,7 @@ for rotation in range(24):
                 quadrants_inverse_z[rotation,quad] = bitz
 
 
-def peano_hilbert_keys(ix, iy, iz, bits):
+def peano_hilbert_keys_block(ix, iy, iz, bits):
     """
     Function to calculate Peano-Hilbert keys
 
@@ -113,6 +115,58 @@ def peano_hilbert_keys(ix, iy, iz, bits):
                 roty -= 1
 
         mask >>= 1
+
+    return key
+
+
+def peano_hilbert_keys(ix, iy, iz, bits):
+    """
+    Reduce memory usage of the PH keys function by processing
+    the input array in sections.
+    """
+
+    n = ix.shape[0]
+    key = ndarray(n, dtype=int64)
+    for i1 in range(0, n, blocksize):
+
+        # Get section to do
+        i2 = i1 + blocksize
+        if i2 > n:
+            i2 = n
+
+        # Calculate keys
+        key[i1:i2] = peano_hilbert_keys_block(ix[i1:i2], iy[i1:i2], iz[i1:i2], bits)
+
+    return key
+
+
+def peano_hilbert_keys_from_coords(pos, boxsize, bits):
+    """
+    Calculate PH keys given particle coordinates,
+    size of the simulation box, and number of bits
+    per dimension.
+    
+    Divides the calculation into blocks to minimize
+    memory usage.
+    """
+    
+    cellsize = float(boxsize) / float(2**bits)
+    n = pos.shape[0]
+    key = ndarray(n, dtype=int64)
+    for i1 in range(0, n, blocksize):
+
+        # Get section to do
+        i2 = i1 + blocksize
+        if i2 > n:
+            i2 = n
+        
+        # Calculate coordinates
+        ix = floor(pos[i1:i2,0]/cellsize).astype(int32)
+        iy = floor(pos[i1:i2,1]/cellsize).astype(int32)
+        iz = floor(pos[i1:i2,2]/cellsize).astype(int32)
+
+        # Calculate keys
+        key[i1:i2] = peano_hilbert_keys_block(ix, iy, iz, bits)
 
     return key
 
