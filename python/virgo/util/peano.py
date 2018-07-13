@@ -171,7 +171,7 @@ def peano_hilbert_keys_from_coords(pos, boxsize, bits):
     return key
 
 
-def peano_hilbert_key_inverses(key, bits):
+def peano_hilbert_key_inverses_block(key, bits):
     """
     Function to calculate coordinates given a P-H key
     
@@ -232,3 +232,25 @@ def peano_hilbert_key_inverses(key, bits):
     return x,y,z
 
 
+def peano_hilbert_key_inverses(key, bits):
+    """
+    Reduced memory version of peano_hilbert_key_inverses
+    """
+    
+    # Allocate output
+    n = key.shape[0]
+    x = zeros(n, dtype=int32)
+    y = zeros(n, dtype=int32)
+    z = zeros(n, dtype=int32)
+    
+    for i1 in range(0, n, blocksize):
+
+        # Get section to do
+        i2 = i1 + blocksize
+        if i2 > n:
+            i2 = n
+            
+        # Calculate coordinates for this section
+        x[i1:i2], y[i1:i2], z[i1:i2] =  peano_hilbert_key_inverses_block(key[i1:i2], bits)
+
+    return x, y, z
