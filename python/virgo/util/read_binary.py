@@ -134,7 +134,7 @@ class BinaryGroup(Mapping):
         return len(self.datasets) + len(self.groups)
 
     def __iter__(self):
-        for key in self.datasets.keys() + self.groups.keys():
+        for key in list(self.datasets.keys()) + list(self.groups.keys()):
             yield key
         
     def _create_group(self, name):
@@ -377,7 +377,7 @@ class BinaryDataset:
 
     def __iter__(self):
         if len(self.shape) >= 1:
-            for i in xrange(self.shape[0]):
+            for i in range(self.shape[0]):
                 yield self[i,...]
         else:
             raise TypeError("Can't iterate a scalar dataset!")

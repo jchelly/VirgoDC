@@ -594,7 +594,7 @@ class GroupOrderedSnapshot():
             result[dataset] = np.concatenate(result[dataset], axis=0)
 
         # Now calculate which subfind group each particle belongs to
-        if "ParticleIDs" in result.keys():
+        if "ParticleIDs" in list(result.keys()):
 
             # Initialise array to -1 to indicate not in a subgroup
             n = result["ParticleIDs"].shape[0]

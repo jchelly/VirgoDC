@@ -1,5 +1,7 @@
 #!/bin/env python
 
+from __future__ import print_function
+
 from numpy  import *
 from mpi4py import MPI
 
@@ -59,7 +61,7 @@ def repartition(arr, ndesired, comm=None):
 
     # mpi4py doesn't like wrong endian data!
     if not(arr.dtype.isnative):
-        print "parallel_sort.py: Unable to operate on non-native endian data!"
+        print("parallel_sort.py: Unable to operate on non-native endian data!")
         comm.Abort()
 
     # Make sure input is an array
@@ -83,7 +85,7 @@ def repartition(arr, ndesired, comm=None):
 
     # Check total doesn't change
     if ntot != sum(ndesired):
-        print "repartition() - number of elements must be conserved!"
+        print("repartition() - number of elements must be conserved!")
         comm.Abort()
 
     # Find first index on each processor
@@ -149,7 +151,7 @@ def fetch_elements(arr, index, result=None, comm=None):
 
     # mpi4py doesn't like wrong endian data!
     if not(arr.dtype.isnative):
-        print "parallel_sort.py: Unable to operate on non-native endian data!"
+        print("parallel_sort.py: Unable to operate on non-native endian data!")
         comm.Abort()
 
     arr   = asarray(arr)
@@ -367,7 +369,7 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
 
     # mpi4py doesn't like wrong endian data!
     if not(arr.dtype.isnative):
-        print "parallel_sort.py: Unable to operate on non-native endian data!"
+        print("parallel_sort.py: Unable to operate on non-native endian data!")
         comm.Abort()
 
     # Record starting time
@@ -377,10 +379,10 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
 
     # Sanity check input
     if not(hasattr(arr,"dtype")) or not(hasattr(arr,"shape")):
-        print "Can only sort arrays!"
+        print("Can only sort arrays!")
         comm.Abort()
     if len(arr.shape) != 1:
-        print "Can only sort 1D data!"
+        print("Can only sort 1D data!")
         comm.Abort()
         
     # Make a new communicator containing only processors
@@ -405,7 +407,7 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
 
         # Sort array locally
         if verbose and mycomm_rank==0:
-            print "Sorting local elements, t = ", time.time()-t0
+            print("Sorting local elements, t = ", time.time()-t0)
         sort_idx1 = my_argsort(arr)
         arr[:] = arr[sort_idx1]
         if not(return_index):
@@ -419,7 +421,7 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
         # of these values (first element on processor mycomm_rank=0 has
         # global rank 0)
         if verbose and mycomm_rank==0:
-            print "Calculating splitting points, t = ", time.time()-t0
+            print("Calculating splitting points, t = ", time.time()-t0)
 
         # Find the values with ranks in split_rank, and also the maximum and
         # minimum ranks which have this value
@@ -452,7 +454,7 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
         # Determine which local elements are to go to which other
         # processor
         if verbose and mycomm_rank==0:
-            print "Determining destination for each element, t = ", time.time()-t0
+            print("Determining destination for each element, t = ", time.time()-t0)
         first_to_send = 0
         send_count = zeros(mycomm_size, dtype=index_dtype)
 
@@ -524,7 +526,7 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
 
         # Exchange data
         if verbose and mycomm_rank==0:
-            print "Exchanging data, t = ", time.time()-t0
+            print("Exchanging data, t = ", time.time()-t0)
         arr_tmp = ndarray(sum(recv_count), dtype=arr.dtype)
         my_alltoallv(arr,     send_count, send_displ,
                      arr_tmp, recv_count, recv_displ,
@@ -532,7 +534,7 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
 
         # Sort local data
         if verbose and mycomm_rank==0:
-            print "Sorting local elements, t = ", time.time()-t0
+            print("Sorting local elements, t = ", time.time()-t0)
         sort_idx2 = my_argsort(arr_tmp)
         arr[:] = arr_tmp[sort_idx2]
         del arr_tmp
@@ -546,7 +548,7 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
         #
         if return_index:
             if verbose and mycomm_rank==0:
-                print "Making index array, t = ", time.time()-t0
+                print("Making index array, t = ", time.time()-t0)
             # Rearrange indices using index from initial local sort
             # of the data array
             index = arange(arr.shape[0], dtype=index_dtype)
@@ -573,7 +575,7 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
             index = ndarray(0, dtype=index_dtype)
 
     if verbose and mycomm_rank==0:
-        print "Parallel sort finished, t = ", time.time()-t0
+        print("Parallel sort finished, t = ", time.time()-t0)
 
     # Finished with communicator
     mycomm.Free()
@@ -605,12 +607,12 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
     
     # mpi4py doesn't like wrong endian data!
     if not(arr1.dtype.isnative) or not(arr2.dtype.isnative):
-        print "parallel_sort.py: Unable to operate on non-native endian data!"
+        print("parallel_sort.py: Unable to operate on non-native endian data!")
         comm.Abort()
 
     # Sanity checks on input arrays
     if len(arr1.shape) != 1 or len(arr2.shape) != 1:
-        print "Can only match elements between 1D arrays!"
+        print("Can only match elements between 1D arrays!")
         comm.Abort()
 
     # If arr1 has no elements we just return an empty index array
@@ -725,7 +727,7 @@ def small_test():
     for i in range(2000):
 
         if comm_rank == 0:
-            print "Test ", i
+            print("Test ", i)
 
         # Make random test aray
         n   = random.randint(200) + 0
@@ -734,7 +736,7 @@ def small_test():
         # Write out input
         for rank in range(comm_size):
             if comm_rank == rank:
-                print comm_rank,":",arr
+                print(comm_rank,":",arr)
                 sys.stdout.flush()
             comm.Barrier()
 
@@ -743,15 +745,15 @@ def small_test():
 
         # Sort
         if comm_rank == 0:
-            print "start sorting"
+            print("start sorting")
         index = parallel_sort(arr, return_index=True)
         if comm_rank == 0:
-            print "done sorting"
+            print("done sorting")
             
         # Write out results
         for rank in range(comm_size):
             if comm_rank == rank:
-                print comm_rank,":",arr
+                print(comm_rank,":",arr)
                 sys.stdout.flush()
             comm.Barrier()
 
@@ -759,7 +761,7 @@ def small_test():
         arr_sorted = arr
         delta = arr_sorted[1:] - arr_sorted[:-1]
         if any(delta<0.0):
-            print "Local values are not sorted correctly!"
+            print("Local values are not sorted correctly!")
             comm.Abort()
 
         # Check ordering between processors
@@ -778,22 +780,22 @@ def small_test():
             all_max = all_max[ind]
             for rank in range(1, sum(ind)):
                 if all_min[rank] < all_max[rank-1]:
-                    print "Values are not sorted correctly between processors!"
+                    print("Values are not sorted correctly between processors!")
                     comm.Abort()
 
         # Check that we can reconstruct the array using the index
         arr_from_index = fetch_elements(orig, index)
         if any(arr_from_index != arr):
-            print "Index doesn't work!"
-            print comm_rank,"-", orig, arr, arr_from_index, index
+            print("Index doesn't work!")
+            print(comm_rank,"-", orig, arr, arr_from_index, index)
             comm.Abort()
         else:
             if comm_rank==0:
-                print "Index is ok"
+                print("Index is ok")
 
         comm.Barrier()
         if comm_rank == 0:
-            print "Array is sorted correctly"
+            print("Array is sorted correctly")
 
 
   
@@ -813,7 +815,7 @@ def big_test():
     ntot1 = comm.allreduce(arr.shape[0])
 
     if comm_rank == 0:
-        print "Total elements = ", ntot1
+        print("Total elements = ", ntot1)
 
     # Sort the array
     comm.Barrier()
@@ -822,13 +824,13 @@ def big_test():
     comm.Barrier()
     t1 = time.time()
     if comm_rank==0:
-        print "Elapsed time (s) = ", t1-t0
+        print("Elapsed time (s) = ", t1-t0)
 
     # Verify order locally
     arr_sorted = arr
     delta = arr_sorted[1:] - arr_sorted[:-1]
     if any(delta<0.0):
-        print "Local values are not sorted correctly!"
+        print("Local values are not sorted correctly!")
         comm.Abort()
 
     # Check ordering between processors
@@ -847,13 +849,13 @@ def big_test():
         all_max = all_max[ind]
         for rank in range(1, sum(ind)):
             if all_min[rank] < all_max[rank-1]:
-                print "Values are not sorted correctly between processors!"
+                print("Values are not sorted correctly between processors!")
                 comm.Abort()
 
     # If we get here, output array is sorted
     comm.Barrier()
     if comm_rank == 0:
-        print "Array is sorted correctly"
+        print("Array is sorted correctly")
 
 
 def repartition_test():
@@ -865,7 +867,7 @@ def repartition_test():
     for i in range(10):
 
         if comm_rank == 0:
-            print "Test ", i
+            print("Test ", i)
 
         # Make random test aray
         n   = random.randint(5) + 0
@@ -874,7 +876,7 @@ def repartition_test():
         # Write out input
         for rank in range(comm_size):
             if comm_rank == rank:
-                print comm_rank," - input:",arr
+                print(comm_rank," - input:",arr)
                 sys.stdout.flush()
             comm.Barrier()        
 
@@ -887,7 +889,7 @@ def repartition_test():
             nlocal = sum(dest==rank)
             ndesired[rank] = comm.allreduce(nlocal)
 
-        print comm_rank, "- Ndesired = ", ndesired
+        print(comm_rank, "- Ndesired = ", ndesired)
         sys.stdout.flush()
         comm.Barrier()
 
@@ -897,7 +899,7 @@ def repartition_test():
         # Write out output
         for rank in range(comm_size):
             if comm_rank == rank:
-                print comm_rank," - output:",new_arr
+                print(comm_rank," - output:",new_arr)
                 sys.stdout.flush()
             comm.Barrier()
 

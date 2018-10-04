@@ -314,7 +314,7 @@ class GroupOrderedSnapshot():
 
         # Now calculate which subfind group each particle belongs to
         for itype in range(6):            
-            if "ParticleIDs" in result[itype].keys():
+            if "ParticleIDs" in list(result[itype].keys()):
 
                 # Initialise array to -1 to indicate not in a subgroup
                 n = result[itype]["ParticleIDs"].shape[0]

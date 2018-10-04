@@ -184,7 +184,7 @@ def find_progenitor_tree_mass(nodeIndex, descendantIndex, snapnum, mass):
     mdesc[ptr>=0] = mbranch[ptr[ptr>=0]]
     
     # Loop over objects in order of increasing snapnum
-    for i in xrange(n):
+    for i in range(n):
         # Check if we have a descendant
         if ptr[i] >= 0:
             # Accumulate descendant's total progenitor mass
@@ -223,7 +223,7 @@ def find_progenitor_branch_mass_delucia(nodeIndex, descendantIndex, snapnum, mas
     mdesc[ptr>=0] = mbranch[ptr[ptr>=0]]
     
     # Loop over objects in order of increasing snapnum
-    for i in xrange(n):
+    for i in range(n):
         # Check if we have a descendant
         if ptr[i] >= 0:
             # If our branch mass plus the descendant mass is greater than

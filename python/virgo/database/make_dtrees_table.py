@@ -114,7 +114,7 @@ def write_sql_server_native_file(tablename, data, data_file, script_file):
     """
 
     # Get number of objects
-    n = data[data.keys()[0]].shape[0]
+    n = data[list(data.keys())[0]].shape[0]
 
     # Generate numpy data type for one row:
     # To do this we need to make a list of (name, datatype) tuples
