@@ -82,21 +82,3 @@ def gather_array(data, root=0, comm=None, axis=0):
 
 
 
-if __name__ == "__main__":
-
-    comm = MPI.COMM_WORLD
-    comm_rank = comm.Get_rank()
-    comm_size = comm.Get_size()
-
-    data = np.arange(3) + 10*comm_rank
-    data = np.asarray((data,data))
-    
-    for i in range(comm_size):
-        if comm_rank == i:
-            print "Data on task ", comm_rank, ":"
-            print data, data.shape
-        comm.barrier()
-
-    result = gather_array(data, axis=1)
-    if result is not None:
-        print "Result is ", result, result.shape
