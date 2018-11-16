@@ -3,7 +3,6 @@
 from __future__ import print_function
 
 from numpy  import *
-from mpi4py import MPI
 
 import time
 import sys
@@ -17,6 +16,7 @@ def my_alltoallv(sendbuf, send_count, send_offset,
     """Alltooallv implemented using sendrecv calls"""
     
     # Get communicator to use
+    from mpi4py import MPI
     if comm is None:
         comm = MPI.COMM_WORLD
     comm_rank = comm.Get_rank()
@@ -54,6 +54,7 @@ def repartition(arr, ndesired, comm=None):
     """Return the input arr repartitioned between processors"""
 
     # Get communicator to use
+    from mpi4py import MPI
     if comm is None:
         comm = MPI.COMM_WORLD
     comm_rank = comm.Get_rank()
@@ -144,6 +145,7 @@ def fetch_elements(arr, index, result=None, comm=None):
     """
 
     # Get communicator to use
+    from mpi4py import MPI
     if comm is None:
         comm = MPI.COMM_WORLD
     comm_rank = comm.Get_rank()
@@ -267,6 +269,7 @@ def find_splitting_points(arr, r, comm=None):
     """
 
     # Get communicator to use
+    from mpi4py import MPI
     if comm is None:
         comm = MPI.COMM_WORLD
 
@@ -364,6 +367,7 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
     """
 
     # Get communicator to use
+    from mpi4py import MPI
     if comm is None:
         comm = MPI.COMM_WORLD
 
@@ -600,6 +604,7 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
     """
 
     # Get communicator to use
+    from mpi4py import MPI
     if comm is None:
         comm = MPI.COMM_WORLD
     comm_rank = comm.Get_rank()
@@ -720,6 +725,7 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
 def small_test():
     """Test sorting code on random arrays"""
 
+    from mpi4py import MPI
     comm = MPI.COMM_WORLD
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
@@ -804,6 +810,7 @@ def big_test():
 
     nmax = int(sys.argv[1])
 
+    from mpi4py import MPI
     comm = MPI.COMM_WORLD
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
@@ -860,6 +867,7 @@ def big_test():
 
 def repartition_test():
 
+    from mpi4py import MPI
     comm = MPI.COMM_WORLD
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()

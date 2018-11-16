@@ -1,12 +1,7 @@
 #!/bin/env python
 
-from mpi4py import MPI
 import traceback
 import sys
-
-comm = MPI.COMM_WORLD
-comm_rank = comm.Get_rank()
-comm_size = comm.Get_size()
 
 def mpi_errchk(func):
     """
@@ -19,7 +14,8 @@ def mpi_errchk(func):
         try:
             return func(*args, **kwargs)
         except (Exception, KeyboardInterrupt) as e:
-            sys.stderr.write("\n\n*** EXCEPTION ***\n"+str(e)+" on rank "+str(comm_rank)+"\n\n")
+            from mpi4py import MPI
+            sys.stderr.write("\n\n*** EXCEPTION ***\n"+str(e)+" on rank "+str(MPI.COMM_WORLD.Get_rank())+"\n\n")
             traceback.print_exc(file=sys.stdout)
             sys.stderr.write("\n\n")
             sys.stderr.flush()

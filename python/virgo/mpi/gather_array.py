@@ -1,7 +1,6 @@
 #!/bin/env python
 
 import numpy as np
-from mpi4py import MPI
 
 
 def allgather_array(data, comm=None, axis=0):
@@ -29,6 +28,7 @@ def gather_array(data, root=0, comm=None, axis=0):
     """
 
     # Get communicator to use
+    from mpi4py import MPI
     if comm is None:
         comm = MPI.COMM_WORLD
     comm_rank = comm.Get_rank()
