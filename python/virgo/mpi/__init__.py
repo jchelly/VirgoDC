@@ -1,4 +1,5 @@
 __all__ = [
     "errchk",
     "parallel_sort",
-    "gather_array",]
+    "gather_array",
+    "util",]
