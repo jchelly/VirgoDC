@@ -37,6 +37,16 @@ The .keys() method can be used to see what quantities exist in the file:
 print subtab.keys()
 ```
 
+
+### Installation
+
+To install the module in your home directory:
+```
+cd VirgoDC/python
+python ./setup.py install --user
+```
+
+
 ### Layout of the module
 
   * virgo.formats: contains classes for reading various binary simulation data formats
@@ -46,6 +56,7 @@ print subtab.keys()
     * an efficient method for finding matching values in arrays of particle IDs
     * a vectorized python implementation of the peano_hilbert_key function from Gadget
   * virgo.mpi: utilities for working with simulation data using mpi4py, including a reasonably efficient MPI parallel sort
+
 
 ### Reading simulation data
 
@@ -66,7 +77,7 @@ pos     = snap["PartType1/Coordinates"][...]
 vel     = snap["PartType1/Velocities"][...]
 ```
 
-#### Subfind output
+#### Friends-of-Friends and Subfind output
 
 The following modules contains classes to read subfind and friends of friends output from several versions of Gadget:
 
@@ -92,3 +103,7 @@ In some cases extra parameters are required before files can be read:
     * SO_BAR_INFO
 
 See the docstrings associated with each class to determine which parameters are required for which formats.
+In most cases calling the sanity_check() method on the object will raise an exception if any parameters
+were set incorrectly.
+
+
