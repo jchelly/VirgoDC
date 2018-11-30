@@ -19,7 +19,7 @@ def mpi_errchk(func):
             traceback.print_exc(file=sys.stdout)
             sys.stderr.write("\n\n")
             sys.stderr.flush()
-            comm.Abort(1)
+            MPI.COMM_WORLD.Abort(1)
     return func_wrapper
 
 

@@ -1,7 +1,8 @@
 #!/bin/env python
 
+import numpy as np
 
-def broadcast_dtype_and_dims(arr, comm):
+def broadcast_dtype_and_dims(arr, comm=None):
     """
     Determine dtype of the specified array, arr, which may be 
     None on ranks which have no local elements.
@@ -10,6 +11,11 @@ def broadcast_dtype_and_dims(arr, comm):
 
     Will return (None, None) if array is None on all tasks.
     """
+
+    if comm is None:
+        from mpi4py import MPI
+        comm = MPI.COMM_WORLD
+
     if arr is not None:
         arr_dtype = arr.dtype
         arr_shape = arr.shape[1:]
@@ -30,7 +36,7 @@ def broadcast_dtype_and_dims(arr, comm):
     return arr_dtype, arr_shape
 
 
-def replace_none_with_zero_size(arr, comm):
+def replace_none_with_zero_size(arr, comm=None):
     """
     Given an array which may be None on some tasks,
     return the array itself on tasks where it is not
@@ -45,6 +51,10 @@ def replace_none_with_zero_size(arr, comm):
 
     Will return None if arr is None on all tasks.
     """
+
+    if comm is None:
+        from mpi4py import MPI
+        comm = MPI.COMM_WORLD
     
     arr_dtype, arr_shape = broadcast_dtype_and_dims(arr, comm)
 
