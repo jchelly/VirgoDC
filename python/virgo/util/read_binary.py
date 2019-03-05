@@ -68,7 +68,7 @@ class MemoryMappedFile:
     def __init__(self, fname):
         self.closed = False
         self.fname  = fname
-        self.file   = open(fname, "r")
+        self.file   = open(fname, "rb")
         self.mmap   = mmap.mmap(self.file.fileno(), 0, access=mmap.ACCESS_READ)
     def __del__(self):
         self.close()
