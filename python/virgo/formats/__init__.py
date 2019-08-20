@@ -6,4 +6,5 @@ __all__ = [
     "subfind_gadget4",
     "mpa_trees",
     "rockstar",
-    "velociraptor"]
+    "velociraptor",
+    "swift"]
