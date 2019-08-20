@@ -6,7 +6,7 @@ import collections.abc
 import h5py
 import numpy
 import unyt
-
+import unyt.dimensions
 
 # Unyt unit names for basic units in SWIFT
 base_units = {
@@ -79,6 +79,13 @@ class SwiftDataset(SwiftBaseWrapper):
             if exponent != 0:
                 cgs = self.base_units_cgs[unit]
                 units *= (base_units[unit]**exponent) * (cgs**exponent)
+        
+        # Add cosmological factors
+        if self.a_exponent is not None:
+            units *= (unyt.Unit('a', registry=self.reg)**self.a_exponent)
+        if self.h_exponent is not None:
+            units *= (unyt.Unit('h', registry=self.reg)**self.h_exponent)
+
         return units
 
     def __getitem__(self, key):
@@ -90,7 +97,7 @@ class SwiftDataset(SwiftBaseWrapper):
         data = self.obj[key]
 
         # Return a unyt.Quantity with suitable units
-        result = unyt.array.unyt_array(data, self.get_unit())
+        result = unyt.array.unyt_array(data, self.get_unit(), registry=self.reg)
 
         # Attach a and h info
         result.a_exponent = self.a_exponent
@@ -122,6 +129,7 @@ class SwiftGroup(SwiftBaseWrapper):
         if result is not obj:
             result.cosmology = self.cosmology
             result.base_units_cgs = self.base_units_cgs
+            result.reg = self.reg
         return result
 
 
@@ -159,3 +167,9 @@ class SwiftSnapshot(SwiftGroup):
                 self.cosmology["a"] = self.obj["Cosmology"].attrs["Scale-factor"][0]
             except KeyError:
                 pass
+
+        # Create a unit system containing h and a for this snapshot
+        self.reg = unyt.UnitRegistry()
+        self.reg.add("a", self.cosmology["a"], unyt.dimensions.dimensionless)
+        self.reg.add("h", self.cosmology["h"], unyt.dimensions.dimensionless)
+
