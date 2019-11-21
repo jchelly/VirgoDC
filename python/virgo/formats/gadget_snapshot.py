@@ -50,7 +50,7 @@ class GadgetBinarySnapshotFile(BinaryFile):
         BinaryFile.__init__(self, fname)
 
         # Read the header record marker and establish endian-ness
-        irec = self.read_and_skip(np.int32)
+        irec = self.read_and_skip(np.uint32)
         if irec == 256:
             self.enable_byteswap(False)
         elif irec == 65536:
@@ -83,7 +83,7 @@ class GadgetBinarySnapshotFile(BinaryFile):
         npart      = sum(npart_type)
 
         # Check end of header marker
-        irec = self.read_and_skip(np.int32)
+        irec = self.read_and_skip(np.uint32)
         if irec != 256:
             raise IOError("Header end of record marker is incorrect!")
 
@@ -116,7 +116,7 @@ class GadgetBinarySnapshotFile(BinaryFile):
 
                 # Check if there's another record in the file
                 try:
-                    irec = self.read_and_skip(np.int32)
+                    irec = self.read_and_skip(np.uint32)
                 except IOError:
                     if count_records < 3:
                         # pos, vel, ids should always be present
@@ -127,7 +127,7 @@ class GadgetBinarySnapshotFile(BinaryFile):
                     count_records += 1
 
                 # Determine bytes per quantitiy
-                nbytes = irec / (n_per_part*nextra)
+                nbytes = np.int64(irec) // (n_per_part*nextra)
                 if (nbytes != 4 and nbytes != 8) or nbytes*n_per_part*nextra != irec:
                     raise IOError("%s record has unexpected length!" % name)
 
@@ -152,7 +152,7 @@ class GadgetBinarySnapshotFile(BinaryFile):
                         self.add_dataset("PartType%i/%s" % (i, name), dtype, full_shape)
 
                 # Read end of record marker
-                irec = self.read_and_skip(np.int32)
+                irec = self.read_and_skip(np.uint32)
                 if irec != n_per_part * np.dtype(dtype).itemsize * nextra:
                     raise IOError("%s end of record marker is incorrect!" % name)
 
