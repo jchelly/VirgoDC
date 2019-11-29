@@ -7,7 +7,7 @@
 import numpy as np
 import virgo.formats.subfind_lgadget3 as subfind_lgadget3
 from virgo.formats.gadget_snapshot  import GadgetBinarySnapshotFile
-from virgo.util import BinaryFile
+from virgo.util.read_binary import BinaryFile
 
 
 class SubDescFile(BinaryFile):
