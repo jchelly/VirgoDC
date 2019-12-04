@@ -3,6 +3,9 @@
 # Classes to read Millennium-XXL output
 # These call the lgadget3 reading code with suitable default parameters.
 #
+# There are also classes for reading subhalo descendant information and
+# density fields which are specific to MXXL.
+#
 
 import numpy as np
 import virgo.formats.subfind_lgadget3 as subfind_lgadget3
@@ -45,3 +48,29 @@ class SnapshotFile(GadgetBinarySnapshotFile):
     These are really just Gadget binary snapshots.
     """
     pass
+
+
+class FieldFile(BinaryFile):
+    def __init__(self, fname, *args):
+        BinaryFile.__init__(self, fname, *args)
+
+        # Read header and check if we need byte swapping
+        irec = self.read_and_skip(np.int32)
+        self.enable_byteswap(irec != 8)
+        self.add_dataset("NTask",   np.int32)
+        self.add_dataset("BoxSize", np.float64)
+        self.add_dataset("nn",      np.int32)
+        self.add_dataset("isw_slabs_per_task", np.int32)
+        irec = self.read_and_skip(np.int32)
+
+        # Set up the grid dataset
+        nn = self["nn"][()]
+        isw_slabs_per_task = self["isw_slabs_per_task"][()]
+        irec = self.read_and_skip(np.int32)
+        if irec != 4*isw_slabs_per_task*nn*nn:
+            raise IOError("Start of grid record has wrong length in density field file")
+        self.add_dataset("grid", np.float32, (isw_slabs_per_task,nn,nn))
+        irec = self.read_and_skip(np.int32)
+        if irec != 4*isw_slabs_per_task*nn*nn:
+            raise IOError("End of grid record has wrong length in density field file")
+        
