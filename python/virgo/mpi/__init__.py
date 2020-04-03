@@ -2,4 +2,5 @@ __all__ = [
     "errchk",
     "parallel_sort",
     "gather_array",
-    "util",]
+    "util",
+    "parallel_hdf5",]
