@@ -13,8 +13,16 @@ index_dtype = int64
 def my_alltoallv(sendbuf, send_count, send_offset,
                  recvbuf, recv_count, recv_offset,
                  comm=None):
-    """Alltooallv implemented using sendrecv calls"""
+    """
+    Alltoallv implemented using sendrecv calls. Avoids problems
+    caused when some ranks send or receive more than 2^31
+    elements by splitting communications.
+    """
     
+    # Maximum number of elements per message:
+    # Needs to be < 2**31 due to MPI API limitations.
+    nchunk = 2**30
+
     # Get communicator to use
     from mpi4py import MPI
     if comm is None:
@@ -29,14 +37,24 @@ def my_alltoallv(sendbuf, send_count, send_offset,
     for ngrp in range(2**ptask):
         rank = comm_rank ^ ngrp
         if rank < comm_size:
-            soff = send_offset[rank]
-            sc   = send_count[rank]
-            roff = recv_offset[rank]
-            rc   = recv_count[rank]
-            if sc > 0 or rc > 0:
-                comm.Sendrecv(sendbuf[soff:soff+sc], rank, 0,
-                              recvbuf[roff:roff+rc], rank, 0)
-
+            # Offsets to next block to send
+            current_send_offset = send_offset[rank]
+            left_to_send        = send_count[rank]
+            current_recv_offset = recv_offset[rank]
+            left_to_recv        = recv_count[rank]
+            # Loop until all data has been sent
+            while left_to_send > 0 or left_to_recv > 0:
+                # Find number to send this time
+                num_to_send = min((left_to_send, nchunk))
+                num_to_recv = min((left_to_recv, nchunk))
+                # Transfer the data
+                comm.Sendrecv(sendbuf[current_send_offset:current_send_offset+num_to_send], rank, 0,
+                              recvbuf[current_recv_offset:current_recv_offset+num_to_recv], rank, 0)
+                # Update counts and offsets
+                left_to_send        -= num_to_send
+                current_send_offset += num_to_send
+                left_to_recv        -= num_to_recv
+                current_recv_offset += num_to_recv
 
         
 def my_argsort(arr):
@@ -847,9 +865,9 @@ def big_test():
     else:
         local_min = 0
         local_max = 0
-    all_min = comm.allgather(local_min)
-    all_max = comm.allgather(local_max)
-    all_n   = comm.allgather(n)
+    all_min = asarray(comm.allgather(local_min))
+    all_max = asarray(comm.allgather(local_max))
+    all_n   = asarray(comm.allgather(n))
     ind = (all_n > 0)
     if sum(ind) > 1:
         all_min = all_min[ind]
