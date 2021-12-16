@@ -1,9 +1,11 @@
 #!/bin/env python
 
 import numpy as np
+import h5py
+import virgo.mpi.util
 
 
-def collective_read(dataset):
+def collective_read(dataset, comm):
     """
     Do a parallel collective read of a HDF5 dataset by splitting
     the dataset equally between MPI ranks along its first axis.
@@ -15,7 +17,7 @@ def collective_read(dataset):
     import h5py
 
     # Find communicator file was opened with
-    comm, info = dataset.file.id.get_access_plist().get_fapl_mpio()
+    #comm, info = dataset.file.id.get_access_plist().get_fapl_mpio()
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
 
@@ -48,7 +50,7 @@ def collective_read(dataset):
     return data
 
 
-def collective_write(group, name, data):
+def collective_write(group, name, data, comm):
     """
     Do a parallel collective write of a HDF5 dataset by concatenating
     contributions from MPI ranks along the first axis.
@@ -60,7 +62,7 @@ def collective_write(group, name, data):
     import h5py
 
     # Find communicator file was opened with
-    comm, info = group.file.id.get_access_plist().get_fapl_mpio()
+    #comm, info = group.file.id.get_access_plist().get_fapl_mpio()
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
 
@@ -97,3 +99,173 @@ def collective_write(group, name, data):
         dataset[slice_to_write] = data
 
     return data
+
+
+def assign_files(nr_files, nr_ranks):
+    """
+    Assign files to MPI ranks
+    """
+    files_on_rank = np.zeros(nr_ranks, dtype=int)
+    files_on_rank[:] = nr_files // nr_ranks
+    remainder = nr_files % nr_ranks
+    if remainder > 0:
+        step = nr_files // remainder
+        for i in range(remainder):
+            files_on_rank[i*step] += 1
+    assert sum(files_on_rank) == nr_files
+    return files_on_rank
+
+
+class MultiFile:
+    """
+    Class to read and concatenate arrays from sets of HDF5 files.
+    Does parallel reads of N files on M MPI ranks for arbitrary
+    N and M.
+    """
+    def __init__(self, filenames, file_nr_attr=None, file_nr_dataset=None, file_idx=None, comm=None):
+
+        # MPI communicator to use
+        if comm is None:
+            from mpi4py import MPI
+            comm = MPI.COMM_WORLD
+        self.comm = comm
+        comm_rank = comm.Get_rank()
+        comm_size = comm.Get_size()
+
+        # Determine file indexes
+        if file_idx is None:
+            if comm_rank == 0:
+                filename = filenames % {"i":0}
+                with h5py.File(filename, "r") as infile:
+                    if file_nr_attr is not None:
+                        obj, attr = file_nr_attr
+                        nr_files = int(infile[obj].attrs[attr])
+                        file_idx = np.arange(nr_files)
+                    elif file_nr_dataset is not None:
+                        nr_files = int(infile[file_nr_dataset][...])
+                        file_idx = np.arange(nr_files)
+                    else:
+                        raise Exception("Must specify one of file_nr_attr, file_nr_dataset, file_idx")
+            else:
+                file_idx = None
+            file_idx = comm.bcast(file_idx)
+
+        # Full list of filenames to read
+        self.filenames = [filenames % {"i":i} for i in file_idx]
+        num_files = len(self.filenames)
+
+        if num_files >= comm_size:
+            # More files than ranks, so assign files to ranks
+            self.collective = False
+            self.num_files_on_rank = assign_files(num_files, comm_size)
+            self.first_file_on_rank = np.cumsum(self.num_files_on_rank) - self.num_files_on_rank
+        else:
+            # More ranks than files, so use collective reading and assign ranks to files.
+            self.collective = True
+            num_ranks_on_file = assign_files(comm_size, num_files)
+            first_rank_on_file = np.cumsum(num_ranks_on_file) - num_ranks_on_file
+            # Find which file this rank is assigned to
+            self.file_index = None
+            for file_nr, (first_rank, num_ranks) in enumerate(zip(first_rank_on_file, num_ranks_on_file)):
+                if comm_rank >= first_rank and comm_rank < first_rank+num_ranks:
+                    self.file_index   = file_nr
+                    self.rank_in_file = comm_rank - first_rank
+                    self.num_ranks    = num_ranks
+                    break
+            assert self.file_index is not None
+            
+    def _read_independent(self, datasets, group=None):
+        """
+        Read and concatenate arrays from multiple files,
+        assuming at least one file per MPI rank.
+        """
+
+        rank  = self.comm.Get_rank()
+        first = self.first_file_on_rank[rank]
+        num   = self.num_files_on_rank[rank]
+
+        data = {name : [] for name in datasets}
+        for i in range(first, first+num):
+            filename = self.filenames[i]
+            with h5py.File(filename, "r") as infile:
+                
+                # Find HDF5 group to read from
+                loc = infile if group is None else infile[group]
+
+                # Read the data, skipping any missing arrays
+                for name in data:
+                    if name in loc:
+                        data[name].append(loc[name][...])
+                        
+        # Combine data from different files
+        for name in data:
+            if len(data[name]) > 0:
+                data[name] = np.concatenate(data[name])
+            else:
+                data[name] = None
+
+        return data
+
+    def _read_collective(self, datasets, group=None):
+        """
+        Read and concatenate arrays from multiple files,
+        assuming more MPI ranks than files so each rank
+        reads part of a file.
+        """
+
+        # Create communicator for the read
+        comm = self.comm.Split(self.file_index, self.rank_in_file)
+
+        # Dict to store the results
+        data = {}
+
+        # Open the file
+        filename = self.filenames[self.file_index]
+        infile = h5py.File(filename, "r", driver="mpio", comm=comm)
+
+        # Loop over datasets to read
+        for name in datasets:
+
+            # Find the dataset, if it exists in this file
+            loc = infile if group is None else infile[group]
+            if name not in loc:
+                continue
+            dset = loc[name]
+
+            # Determine elements to read on this MPI rank
+            n = dset.shape[0]
+            n_per_rank = n // self.num_ranks
+            offset = n_per_rank * self.rank_in_file
+            length = n_per_rank
+            # Last rank reads any extra elements
+            if self.rank_in_file == self.num_ranks-1:
+                length += n % self.num_ranks
+
+            # Read the data
+            with dset.collective:
+                data[name] = dset[offset:offset+length,...]
+
+        infile.close()
+        comm.Free()
+
+        return data
+        
+    def read(self, datasets, group=None):
+
+        if self.collective:
+            data = self._read_collective(datasets, group)
+        else:
+            data = self._read_independent(datasets, group)
+
+        # Ensure native endian data: mpi4py doesn't like arrays tagged as big or
+        # little endian rather than native.
+        for name in data:
+            if data[name] is not None:
+                data[name] = data[name].astype(data[name].dtype.newbyteorder("="))
+
+        # Create zero length arrays on ranks with no elements.
+        # May still return None if all ranks have no elements.
+        for name in data:
+            data[name] = virgo.mpi.util.replace_none_with_zero_size(data[name], self.comm)
+
+        return data
