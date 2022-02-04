@@ -104,8 +104,8 @@ def group_index_from_length_and_offset(length, offset, nr_local_ids, comm=None):
     i2 = all_offsets + all_lengths - nr_ids_prev
     i1[i1 < 0] = 0
     i2[i2 > nr_local_ids] = nr_local_ids
-    ind = i2 > i1    
-    for i, (start, end) in enumerate(zip(i1[ind], i2[ind])):
-        grnr[start:end] = i
+    for i, (start, end) in enumerate(zip(i1, i2)):
+        if end > start:
+            grnr[start:end] = i
         
     return grnr
