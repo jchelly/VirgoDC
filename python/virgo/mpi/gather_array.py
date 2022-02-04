@@ -8,7 +8,7 @@ def allgather_array(data, comm=None, axis=0):
     To do an MPI_ALLGATHERV, we just set the root parameter
     to None.
     """
-    return gather_vector(data, root=None, comm=comm, axis=axis)
+    return gather_array(data, root=None, comm=comm, axis=axis)
 
 
 def gather_array(data, root=0, comm=None, axis=0):
