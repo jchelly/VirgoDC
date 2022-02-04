@@ -221,7 +221,8 @@ class MultiFile:
 
         # Open the file
         filename = self.filenames[self.file_index]
-        infile = h5py.File(filename, "r", driver="mpio", comm=comm)
+        #infile = h5py.File(filename, "r", driver="mpio", comm=comm)
+        infile = h5py.File(filename, "r")
 
         # Loop over datasets to read
         for name in datasets:
@@ -242,8 +243,8 @@ class MultiFile:
                 length += n % self.num_ranks
 
             # Read the data
-            with dset.collective:
-                data[name] = dset[offset:offset+length,...]
+            #with dset.collective:
+            data[name] = dset[offset:offset+length,...]
 
         infile.close()
         comm.Free()
