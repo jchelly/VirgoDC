@@ -1,7 +1,6 @@
 #!/bin/env python
 
 import numpy as np
-import h5py
 import virgo.mpi.util
 
 
@@ -15,9 +14,8 @@ def collective_read(dataset, comm):
 
     # Avoid initializing HDF5 (and therefore MPI) until necessary
     import h5py
+    from mpi4py import MPI
 
-    # Find communicator file was opened with
-    #comm, info = dataset.file.id.get_access_plist().get_fapl_mpio()
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
 
@@ -31,9 +29,6 @@ def collective_read(dataset, comm):
     # Determine offsets to read at on each task
     offset_on_task = np.cumsum(num_on_task) - num_on_task
 
-    # Determine slice to read
-    slice_to_read = np.s_[offset_on_task[comm_rank]:offset_on_task[comm_rank]+num_on_task[comm_rank],...]
-
     if ntot < 10*comm_size:
         # If the dataset is small, read on one rank and broadcast
         if comm_rank == 0:
@@ -41,12 +36,39 @@ def collective_read(dataset, comm):
         else:
             data = None
         data = comm.bcast(data)
-        return data[slice_to_read]
+        return data[offset_on_task[comm_rank]:offset_on_task[comm_rank]+num_on_task[comm_rank],...]
     else:
         # Otherwise do a collective read
-        with dataset.collective:
-            data = dataset[slice_to_read]
-    
+        # Reading >2GB fails, so we may need to chunk the read.
+        # Compute amount of local data to read
+        element_size = dataset.dtype.itemsize
+        for s in dataset.shape[1:]:
+            element_size *= s
+        local_nr_bytes = num_on_task[comm_rank] * element_size
+        # Compute number of iterations this task needs
+        chunk_size_bytes = 2**30
+        chunk_size_elements = chunk_size_bytes // element_size
+        local_nr_iterations = num_on_task[comm_rank] // chunk_size_elements
+        if num_on_task[comm_rank] % chunk_size_elements > 0:
+            local_nr_iterations += 1
+        # Find maximum number of iterations over all tasks
+        global_nr_iterations = comm.allreduce(local_nr_iterations, op=MPI.MAX)
+        # Allocate the output array
+        shape = list(dataset.shape)
+        shape[0] = num_on_task[comm_rank]
+        data = np.ndarray(shape, dtype=dataset.dtype)
+        # Read the data
+        offset_in_mem = 0
+        offset_in_file = offset_on_task[comm_rank]
+        nr_left = num_on_task[comm_rank]
+        for i in range(global_nr_iterations):
+            length = min(nr_left, chunk_size_elements)
+            with dataset.collective:
+                data[offset_in_mem:offset_in_mem+length,...] = dataset[offset_in_file:offset_in_file+length,...]
+            offset_in_mem += length
+            offset_in_file += length
+            nr_left -= length
+
     return data
 
 
@@ -123,6 +145,9 @@ class MultiFile:
     N and M.
     """
     def __init__(self, filenames, file_nr_attr=None, file_nr_dataset=None, file_idx=None, comm=None):
+
+        # Avoid initializing HDF5 (and therefore MPI) until necessary
+        import h5py
 
         # MPI communicator to use
         if comm is None:
@@ -213,7 +238,8 @@ class MultiFile:
         reads part of a file.
         """
 
-        # Create communicator for the read
+        # Create communicators for the read:
+        # One communicator per file which contains all ranks reading that file.
         comm = self.comm.Split(self.file_index, self.rank_in_file)
 
         # Dict to store the results
@@ -221,30 +247,19 @@ class MultiFile:
 
         # Open the file
         filename = self.filenames[self.file_index]
-        #infile = h5py.File(filename, "r", driver="mpio", comm=comm)
-        infile = h5py.File(filename, "r")
+        infile = h5py.File(filename, "r", driver="mpio", comm=comm)
 
         # Loop over datasets to read
         for name in datasets:
 
-            # Find the dataset, if it exists in this file
+            # Find the dataset
             loc = infile if group is None else infile[group]
             if name not in loc:
-                continue
-            dset = loc[name]
-
-            # Determine elements to read on this MPI rank
-            n = dset.shape[0]
-            n_per_rank = n // self.num_ranks
-            offset = n_per_rank * self.rank_in_file
-            length = n_per_rank
-            # Last rank reads any extra elements
-            if self.rank_in_file == self.num_ranks-1:
-                length += n % self.num_ranks
-
-            # Read the data
-            #with dset.collective:
-            data[name] = dset[offset:offset+length,...]
+                # Dataset doesn't exist in this file
+                data[name] = None
+            else:
+                # Dataset exists, so do a collective read
+                data[name] = collective_read(loc[name], comm)
 
         infile.close()
         comm.Free()
