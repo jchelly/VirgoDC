@@ -22,7 +22,8 @@ def my_alltoallv(sendbuf, send_count, send_offset,
     
     # Maximum number of elements per message: avoid messages > 2GB
     assert sendbuf.dtype == recvbuf.dtype
-    nchunk = ((2**31)-1) // sendbuf.dtype.itemsize
+    #nchunk = ((2**31)-1) // sendbuf.dtype.itemsize
+    nchunk = (100*1024*1024) // sendbuf.dtype.itemsize
 
     # Get communicator to use
     from mpi4py import MPI

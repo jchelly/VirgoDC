@@ -80,9 +80,6 @@ def collective_write(group, name, data, comm):
     File must have been opened in MPI mode.
     """
 
-    # Avoid initializing HDF5 (and therefore MPI) until necessary
-    import h5py
-
     # Find communicator file was opened with
     #comm, info = group.file.id.get_access_plist().get_fapl_mpio()
     comm_rank = comm.Get_rank()
@@ -131,9 +128,9 @@ def assign_files(nr_files, nr_ranks):
     files_on_rank[:] = nr_files // nr_ranks
     remainder = nr_files % nr_ranks
     if remainder > 0:
-        step = nr_files // remainder
+        step = max(nr_files // (remainder+1), 1)
         for i in range(remainder):
-            files_on_rank[i*step] += 1
+            files_on_rank[(i*step) % nr_ranks] += 1
     assert sum(files_on_rank) == nr_files
     return files_on_rank
 
@@ -205,6 +202,9 @@ class MultiFile:
         assuming at least one file per MPI rank.
         """
 
+        # Avoid initializing HDF5 (and therefore MPI) until necessary
+        import h5py
+
         rank  = self.comm.Get_rank()
         first = self.first_file_on_rank[rank]
         num   = self.num_files_on_rank[rank]
@@ -237,6 +237,9 @@ class MultiFile:
         assuming more MPI ranks than files so each rank
         reads part of a file.
         """
+
+        # Avoid initializing HDF5 (and therefore MPI) until necessary
+        import h5py
 
         # Create communicators for the read:
         # One communicator per file which contains all ranks reading that file.
