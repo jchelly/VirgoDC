@@ -10,6 +10,7 @@ import gc
 
 # Type to use for global indexes
 index_dtype = int64
+
     
 def my_alltoallv(sendbuf, send_count, send_offset,
                  recvbuf, recv_count, recv_offset,
@@ -176,7 +177,7 @@ def fetch_elements(arr, index, result=None, comm=None):
         print("parallel_sort.py: Unable to operate on non-native endian data!")
         comm.Abort()
 
-    arr   = asarray(arr)
+    #arr   = asarray(arr)
     index = asarray(index, dtype=index_dtype)
 
     # Sanity checks on input arrays
@@ -230,7 +231,7 @@ def fetch_elements(arr, index, result=None, comm=None):
         # Will return result, so allocate storage
         shape = list(arr.shape)
         shape[0] = index.shape[0]
-        values_recv = ndarray(shape, dtype=arr.dtype)
+        values_recv = empty_like(arr, shape=shape)
     else:
         # Will put result in supplied array
         values_recv = result
