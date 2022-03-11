@@ -134,7 +134,7 @@ def repartition(arr, ndesired, comm=None):
 
     shape = list(arr.shape)
     shape[0] = sum(recv_count)
-    arr_return = ndarray(shape, dtype=arr.dtype)
+    arr_return = empty_like(arr, shape=shape, dtype=arr.dtype)
     my_alltoallv(arr.reshape((-1,)),        nvalues*send_count, nvalues*send_displ,
                  arr_return.reshape((-1,)), nvalues*recv_count, nvalues*recv_displ,
                  comm=comm)
@@ -278,7 +278,7 @@ def gather_to_2d_array(arr_in, comm):
     arr_in needs to be the same size on all tasks
     """
     comm_size = comm.Get_size()
-    arr_out = ndarray(comm_size*len(arr_in), dtype=arr_in.dtype)
+    arr_out = empty_like(arr_in, shape=comm_size*len(arr_in), dtype=arr_in.dtype)
     comm.Allgather(arr_in, arr_out)
     return arr_out.reshape((comm_size, len(arr_in)))
 
@@ -555,7 +555,7 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
         # Exchange data
         if verbose and mycomm_rank==0:
             print("Exchanging data, t = ", time.time()-t0)
-        arr_tmp = ndarray(sum(recv_count), dtype=arr.dtype)
+        arr_tmp = empty_like(arr, shape=sum(recv_count), dtype=arr.dtype)
         my_alltoallv(arr,     send_count, send_displ,
                      arr_tmp, recv_count, recv_displ,
                      comm=mycomm)
