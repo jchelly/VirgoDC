@@ -174,6 +174,7 @@ class MultiFile:
 
         # Full list of filenames to read
         self.filenames = [filenames % {"i":i} for i in file_idx]
+        self.all_file_indexes = file_idx
         num_files = len(self.filenames)
 
         if num_files >= comm_size:
@@ -196,7 +197,7 @@ class MultiFile:
                     break
             assert self.file_index is not None
             
-    def _read_independent(self, datasets, group=None):
+    def _read_independent(self, datasets, group=None, return_file_nr=None):
         """
         Read and concatenate arrays from multiple files,
         assuming at least one file per MPI rank.
@@ -208,6 +209,12 @@ class MultiFile:
         rank  = self.comm.Get_rank()
         first = self.first_file_on_rank[rank]
         num   = self.num_files_on_rank[rank]
+
+        # Dict to store the file index for some datasets
+        if return_file_nr is not None:
+            file_nr = {name : [] for name in return_file_nr}
+        else:
+            file_nr = None
 
         data = {name : [] for name in datasets}
         for i in range(first, first+num):
@@ -221,7 +228,10 @@ class MultiFile:
                 for name in data:
                     if name in loc:
                         data[name].append(loc[name][...])
-                        
+                        if file_nr is not None and name in file_nr:
+                            n = data[name][-1].shape[0]
+                            file_nr[name].append(np.ones(n, dtype=int)*self.all_file_indexes[i])
+
         # Combine data from different files
         for name in data:
             if len(data[name]) > 0:
@@ -229,9 +239,17 @@ class MultiFile:
             else:
                 data[name] = None
 
-        return data
+        # Combine file indexes
+        if file_nr is not None:
+            for name in file_nr:
+                if len(file_nr[name]) > 0:
+                    file_nr[name] = np.concatenate(file_nr[name])
+                else:
+                    file_nr[name] = None
 
-    def _read_collective(self, datasets, group=None):
+        return data, file_nr
+
+    def _read_collective(self, datasets, group=None, return_file_nr=None):
         """
         Read and concatenate arrays from multiple files,
         assuming more MPI ranks than files so each rank
@@ -247,6 +265,12 @@ class MultiFile:
 
         # Dict to store the results
         data = {}
+
+        # Dict to store the file index for some datasets
+        if return_file_nr is not None:
+            file_nr = {}
+        else:
+            file_nr = None
 
         # Open the file
         filename = self.filenames[self.file_index]
@@ -264,17 +288,22 @@ class MultiFile:
                 # Dataset exists, so do a collective read
                 data[name] = collective_read(loc[name], comm)
 
+            # Store file number
+            if file_nr is not None:
+                n = data[name].shape[0]
+                file_nr[name] = np.ones(n, dtype=int)*self.file_index
+
         infile.close()
         comm.Free()
 
-        return data
+        return data, file_nr
         
-    def read(self, datasets, group=None):
+    def read(self, datasets, group=None, return_file_nr=None):
 
         if self.collective:
-            data = self._read_collective(datasets, group)
+            data, file_nr = self._read_collective(datasets, group, return_file_nr)
         else:
-            data = self._read_independent(datasets, group)
+            data, file_nr = self._read_independent(datasets, group, return_file_nr)
 
         # Ensure native endian data: mpi4py doesn't like arrays tagged as big or
         # little endian rather than native.
@@ -286,5 +315,11 @@ class MultiFile:
         # May still return None if all ranks have no elements.
         for name in data:
             data[name] = virgo.mpi.util.replace_none_with_zero_size(data[name], self.comm)
+        if file_nr is not None:
+            for name in file_nr:
+                file_nr[name] = virgo.mpi.util.replace_none_with_zero_size(file_nr[name], self.comm)
 
-        return data
+        if return_file_nr is None:
+            return data
+        else:
+            return data, file_nr
