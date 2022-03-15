@@ -2,6 +2,7 @@
 
 import numpy as np
 import virgo.mpi.gather_array as ga
+import virgo.mpi.parallel_sort as ps
 
 def broadcast_dtype_and_dims(arr, comm=None):
     """
@@ -77,7 +78,8 @@ def group_index_from_length_and_offset(length, offset, nr_local_ids, comm=None):
     offset: array with the offsets to the groups
     nr_local_ids: size of the local part of the particle ID array
 
-    This can be used for interpreting subfind subhalo_tab/ids files.
+    This can be used for interpreting subfind subhalo_tab/ids files
+    or VELOCIraptor output.
     """
 
     if comm is None:
@@ -91,21 +93,66 @@ def group_index_from_length_and_offset(length, offset, nr_local_ids, comm=None):
     length = np.asarray(length, dtype=np.int64)
     offset = np.asarray(offset, dtype=np.int64)
 
-    # Gather the lengths and offsets
-    all_lengths = ga.allgather_array(length, comm=comm)
-    all_offsets = ga.allgather_array(offset, comm=comm)
+    # Compute index of each group stored locally
+    nr_groups_local = len(length)
+    index_offset = comm.scan(nr_groups_local) - nr_groups_local
+    index = np.arange(nr_groups_local, dtype=np.int64) + index_offset
 
-    # Find number of IDs on lower numbered ranks
+    # Find range of particle IDs stored on each rank
+    first_id_offset_local = comm.scan(nr_local_ids) - nr_local_ids
+    first_id_offset = comm.allgather(first_id_offset_local)
+    last_id_offset_local  = comm.scan(nr_local_ids) - 1
+    last_id_offset = comm.allgather(last_id_offset_local)
+    
+    # Find the range of ranks we need to send each group's length, offset and index
+    rank_send_offset = -np.ones(comm_size, dtype=int)
+    rank_send_count = np.zeros(comm_size, dtype=int)
+    first_rank_to_send_group_to = 0
+    last_rank_to_send_group_to = -1
+    for i in range(nr_groups_local):
+        # Find first rank this group should be sent to
+        while first_rank_to_send_group_to < comm_size-1 and last_id_offset[first_rank_to_send_group_to] < offset[i]:
+            first_rank_to_send_group_to += 1
+        # Find last rank this group should be sent to
+        while last_rank_to_send_group_to < comm_size-1 and first_id_offset[last_rank_to_send_group_to+1] < offset[i]+length[i]:
+            last_rank_to_send_group_to += 1
+        # Accumulate number of groups to send to each rank
+        for dest in range(first_rank_to_send_group_to, last_rank_to_send_group_to+1):
+            if rank_send_offset[dest] < 0:
+                rank_send_offset[dest] = i
+            rank_send_count[dest] += 1
+
+    # Find number of groups to receive on each rank and offset into receive buffers
+    rank_recv_count = np.empty_like(rank_send_count)
+    comm.Alltoall(rank_send_count, rank_recv_count)
+    rank_recv_offset = np.cumsum(rank_recv_count) - rank_recv_count
+
+    # Construct receive buffers
+    nr_recv = np.sum(rank_recv_count)
+    length_recv = np.ndarray(nr_recv, dtype=length.dtype)
+    offset_recv = np.ndarray(nr_recv, dtype=offset.dtype)
+    index_recv  = np.ndarray(nr_recv, dtype=index.dtype)
+
+    # Exchange group lengths, offsets and indexes
+    ps.my_alltoallv(length,      rank_send_count, rank_send_offset,
+                    length_recv, rank_recv_count, rank_recv_offset,
+                    comm=comm)
+    ps.my_alltoallv(offset,      rank_send_count, rank_send_offset,
+                    offset_recv, rank_recv_count, rank_recv_offset,
+                    comm=comm)
+    ps.my_alltoallv(index,       rank_send_count, rank_send_offset,
+                    index_recv,  rank_recv_count, rank_recv_offset,
+                    comm=comm)
+
+    # Assign group membership to local particle IDs
     nr_ids_prev = comm.scan(nr_local_ids) - nr_local_ids
-
-    # Make array with group membership for each local particle
     grnr = -np.ones(nr_local_ids, dtype=np.int32)
-    i1 = all_offsets - nr_ids_prev
-    i2 = all_offsets + all_lengths - nr_ids_prev
+    i1 = offset_recv - nr_ids_prev
+    i2 = offset_recv + length_recv - nr_ids_prev
     i1[i1 < 0] = 0
     i2[i2 > nr_local_ids] = nr_local_ids
-    for i, (start, end) in enumerate(zip(i1, i2)):
+    for ind, start, end in zip(index_recv, i1, i2):
         if end > start:
-            grnr[start:end] = i
-        
+            grnr[start:end] = ind
+            
     return grnr
