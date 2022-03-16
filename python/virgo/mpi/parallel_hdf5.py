@@ -157,7 +157,7 @@ class MultiFile:
         # Determine file indexes
         if file_idx is None:
             if comm_rank == 0:
-                filename = filenames % {"i":0}
+                filename = filenames % {"file_nr":0}
                 with h5py.File(filename, "r") as infile:
                     if file_nr_attr is not None:
                         obj, attr = file_nr_attr
@@ -173,7 +173,7 @@ class MultiFile:
             file_idx = comm.bcast(file_idx)
 
         # Full list of filenames to read
-        self.filenames = [filenames % {"i":i} for i in file_idx]
+        self.filenames = [filenames % {"file_nr":i} for i in file_idx]
         self.all_file_indexes = file_idx
         num_files = len(self.filenames)
 
@@ -386,7 +386,7 @@ class MultiFile:
 
         offset = 0
         for i in range(first, first+num):
-            filename = filenames % {"i" : self.all_file_indexes[i]}
+            filename = filenames % {"file_nr" : self.all_file_indexes[i]}
             with h5py.File(filename, mode) as outfile:
                 
                 # Ensure the group exists
@@ -414,7 +414,7 @@ class MultiFile:
         comm = self.comm.Split(self.collective_file_nr, self.rank_in_file)
 
         # Open the file
-        filename = filenames % {"i" : self.all_file_indexes[self.collective_file_nr]}
+        filename = filenames % {"file_nr" : self.all_file_indexes[self.collective_file_nr]}
         outfile = h5py.File(filename, mode, driver="mpio", comm=comm)
 
         # Ensure the group exists
