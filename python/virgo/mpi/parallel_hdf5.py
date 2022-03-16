@@ -188,14 +188,14 @@ class MultiFile:
             num_ranks_on_file = assign_files(comm_size, num_files)
             first_rank_on_file = np.cumsum(num_ranks_on_file) - num_ranks_on_file
             # Find which file this rank is assigned to
-            self.file_index = None
+            self.collective_file_nr = None
             for file_nr, (first_rank, num_ranks) in enumerate(zip(first_rank_on_file, num_ranks_on_file)):
                 if comm_rank >= first_rank and comm_rank < first_rank+num_ranks:
-                    self.file_index   = file_nr
+                    self.collective_file_nr   = file_nr
                     self.rank_in_file = comm_rank - first_rank
                     self.num_ranks    = num_ranks
                     break
-            assert self.file_index is not None
+            assert self.collective_file_nr is not None
             
     def _read_independent(self, datasets, group=None, return_file_nr=None):
         """
@@ -261,7 +261,7 @@ class MultiFile:
 
         # Create communicators for the read:
         # One communicator per file which contains all ranks reading that file.
-        comm = self.comm.Split(self.file_index, self.rank_in_file)
+        comm = self.comm.Split(self.collective_file_nr, self.rank_in_file)
 
         # Dict to store the results
         data = {}
@@ -273,7 +273,7 @@ class MultiFile:
             file_nr = None
 
         # Open the file
-        filename = self.filenames[self.file_index]
+        filename = self.filenames[self.collective_file_nr]
         infile = h5py.File(filename, "r", driver="mpio", comm=comm)
 
         # Loop over datasets to read
@@ -291,7 +291,7 @@ class MultiFile:
             # Store file number
             if file_nr is not None:
                 n = data[name].shape[0]
-                file_nr[name] = np.ones(n, dtype=int)*self.file_index
+                file_nr[name] = np.ones(n, dtype=int)*self.all_file_indexes[self.collective_file_nr]
 
         infile.close()
         comm.Free()
@@ -299,6 +299,10 @@ class MultiFile:
         return data, file_nr
         
     def read(self, datasets, group=None, return_file_nr=None):
+        """
+        Read and concatenate arrays from a set of one or more
+        files, using independent or collective I/O as appropriate.
+        """
 
         if self.collective:
             data, file_nr = self._read_collective(datasets, group, return_file_nr)
@@ -323,3 +327,124 @@ class MultiFile:
             return data
         else:
             return data, file_nr
+
+    def get_elements_per_file(self, name, group=None):
+        """
+        Determine how many elements the specified dataset has in
+        each file.
+        """
+
+        # Avoid initializing HDF5 (and therefore MPI) until necessary
+        import h5py
+        
+        elements_per_file = {}
+        if self.collective:
+            # Collective I/O: groups of ranks read a file each
+            comm = self.comm.Split(self.collective_file_nr, self.rank_in_file)
+            filename = self.filenames[self.collective_file_nr]
+            infile = h5py.File(filename, "r", driver="mpio", comm=comm)
+            loc = infile if group is None else infile[group]
+            if name in loc:
+                ntot = loc[name].shape[0]
+                comm_size = comm.Get_size()
+                comm_rank = comm.Get_rank()
+                num_on_task = np.zeros(comm_size, dtype=int)
+                num_on_task[:] = ntot // comm_size
+                num_on_task[0:ntot % comm_size] += 1
+                assert sum(num_on_task) == ntot
+                elements_per_file[self.all_file_indexes[self.collective_file_nr]] = num_on_task[comm_rank]
+            else:
+                elements_per_file[self.all_file_indexes[self.collective_file_nr]] = 0
+            infile.close()
+        else:
+            # Independent I/O: different ranks read different files
+            rank  = self.comm.Get_rank()
+            first = self.first_file_on_rank[rank]
+            num   = self.num_files_on_rank[rank]
+            for i in range(first, first+num):
+                filename = self.filenames[i]
+                with h5py.File(filename, "r") as infile:
+                    loc = infile if group is None else infile[group]
+                    if name in loc:
+                        elements_per_file[self.all_file_indexes[i]] = loc[name].shape[0]
+                    else:
+                        elements_per_file[self.all_file_indexes[i]] = 0
+
+        return elements_per_file
+
+    def _write_independent(self, data, elements_per_file, filenames, mode, group=None):
+        """
+        Write arrays to multiple files, assuming at least one file per MPI rank.
+        """
+
+        # Avoid initializing HDF5 (and therefore MPI) until necessary
+        import h5py
+
+        rank  = self.comm.Get_rank()
+        first = self.first_file_on_rank[rank]
+        num   = self.num_files_on_rank[rank]
+
+        offset = 0
+        for i in range(first, first+num):
+            filename = filenames % {"i" : self.all_file_indexes[i]}
+            with h5py.File(filename, mode) as outfile:
+                
+                # Ensure the group exists
+                if group is not None:
+                    loc = outfile.require_group(group)
+                else:
+                    loc = outfile
+
+                # Write the data
+                length = elements_per_file[self.all_file_indexes[i]]
+                if length > 0:
+                    for name in data:
+                        loc[name] = data[name][offset:offset+length,...]
+                offset += length
+
+    def _write_collective(self, data, elements_per_file, filenames, mode, group=None):
+        """
+        Read and concatenate arrays from multiple files,
+        assuming more MPI ranks than files so each rank
+        reads part of a file.
+        """
+
+        # Avoid initializing HDF5 (and therefore MPI) until necessary
+        import h5py
+        comm = self.comm.Split(self.collective_file_nr, self.rank_in_file)
+
+        # Open the file
+        filename = filenames % {"i" : self.all_file_indexes[self.collective_file_nr]}
+        outfile = h5py.File(filename, mode, driver="mpio", comm=comm)
+
+        # Ensure the group exists
+        if group is not None:
+            loc = outfile.require_group(group)
+        else:
+            loc = outfile
+        
+        # Write the data
+        for name in data:
+            length = elements_per_file[self.all_file_indexes[self.collective_file_nr]]
+            assert length == data[name].shape[0]
+            length_tot = comm.allreduce(length)
+            if length_tot > 0:
+                collective_write(loc, name, data[name], comm)
+                
+        outfile.close()
+        comm.Free()
+
+    def write(self, data, elements_per_file, filenames, mode, group=None):
+        """
+        Write out the supplied datasets with the same layout as the
+        input. Use mode parameter to choose whether to create new
+        files or modify existing files.
+        """
+
+        if self.collective:
+            # Collective mode
+            self._write_collective(data, elements_per_file, filenames, mode, group)
+        else:
+            # Independent mode
+            self._write_independent(data, elements_per_file, filenames, mode, group)
+            
