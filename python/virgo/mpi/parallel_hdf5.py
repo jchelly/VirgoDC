@@ -372,7 +372,7 @@ class MultiFile:
 
         return elements_per_file
 
-    def _write_independent(self, data, elements_per_file, filenames, mode, group=None):
+    def _write_independent(self, data, elements_per_file, filenames, mode, group=None, attrs=None):
         """
         Write arrays to multiple files, assuming at least one file per MPI rank.
         """
@@ -400,9 +400,13 @@ class MultiFile:
                 if length > 0:
                     for name in data:
                         loc[name] = data[name][offset:offset+length,...]
+                        if attrs is not None and name in attrs:
+                            for attr_name, attr_val in attrs[name].items():
+                                loc[name].attrs[attr_name] = attr_val
+
                 offset += length
 
-    def _write_collective(self, data, elements_per_file, filenames, mode, group=None):
+    def _write_collective(self, data, elements_per_file, filenames, mode, group=None, attrs=None):
         """
         Read and concatenate arrays from multiple files,
         assuming more MPI ranks than files so each rank
@@ -430,11 +434,14 @@ class MultiFile:
             length_tot = comm.allreduce(length)
             if length_tot > 0:
                 collective_write(loc, name, data[name], comm)
-                
+            if attrs is not None and name in attrs:
+                for attr_name, attr_val in attrs[name].items():
+                    loc[name].attrs[attr_name] = attr_val
+         
         outfile.close()
         comm.Free()
 
-    def write(self, data, elements_per_file, filenames, mode, group=None):
+    def write(self, data, elements_per_file, filenames, mode, group=None, attrs=None):
         """
         Write out the supplied datasets with the same layout as the
         input. Use mode parameter to choose whether to create new
@@ -443,8 +450,8 @@ class MultiFile:
 
         if self.collective:
             # Collective mode
-            self._write_collective(data, elements_per_file, filenames, mode, group)
+            self._write_collective(data, elements_per_file, filenames, mode, group, attrs)
         else:
             # Independent mode
-            self._write_independent(data, elements_per_file, filenames, mode, group)
+            self._write_independent(data, elements_per_file, filenames, mode, group, attrs)
             
