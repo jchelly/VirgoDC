@@ -1,7 +1,11 @@
 #!/bin/env python
 
 import re
-import collections.abc
+
+try:
+    from collections.abc import Mapping
+except ImportError:
+    from collections import Mapping    
 
 import h5py
 import numpy
@@ -18,7 +22,7 @@ base_units = {
 }
 
 
-class SwiftBaseWrapper(collections.abc.Mapping):
+class SwiftBaseWrapper(Mapping):
     """
     Base class for the Group, Dataset and File objects.
     Implements the (immutable) Mapping interface.

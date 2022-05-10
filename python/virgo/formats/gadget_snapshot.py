@@ -2,7 +2,10 @@
 
 import numpy as np
 import re
-from collections import Mapping
+try:
+    from collections.abc import Mapping
+except ImportError:
+    from collections import Mapping    
 from  virgo.util.read_binary import BinaryFile
 
 # Check if we have h5py

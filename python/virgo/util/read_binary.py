@@ -2,7 +2,11 @@
 
 import os
 import numpy as np
-from collections import OrderedDict, Mapping
+from collections import OrderedDict
+try:
+    from collections.abc import Mapping
+except ImportError:
+    from collections import Mapping
 import mmap
 import weakref
 import sys

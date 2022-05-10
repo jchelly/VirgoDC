@@ -5,8 +5,8 @@
 
 import os
 import numpy as np
-from collections import Mapping
 from virgo.util.read_binary import BinaryFile
+
 
 class HalosFile(BinaryFile):
     """
