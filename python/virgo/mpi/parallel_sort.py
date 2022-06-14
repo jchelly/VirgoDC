@@ -732,14 +732,12 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
                  index_out,    send_count, send_displ,
                  comm=comm)
     del index_return
-    garbage_collect()
 
     # Restore original order
     index = empty_like(index_out)
     index[idx] = index_out
     del index_out
     del idx
-    garbage_collect()
 
     return index
 
