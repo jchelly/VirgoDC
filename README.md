@@ -40,12 +40,31 @@ print subtab.keys()
 
 ### Installation
 
+#### Installation of dependencies
+
+The parallel_sort and parallel_hdf5 modules require mpi4py and h5py. On a HPC system
+these may need to be built from source to ensure they're linked to the right MPI implementation.
+
+To install mpi4py, ensure that the right mpicc is in your $PATH (e.g. by loading environment modules) and run
+```
+python -m pip install mpi4py
+```
+
+To install h5py, if the right mpicc is in your $PATH and HDF5 is installed at $HDF5_HOME:
+```
+export CC="mpicc"
+export HDF5_MPI="ON"
+export HDF5_DIR=${HDF5_HOME}
+pip install --no-binary h5py h5py
+```
+
+#### Installing the module
+
 To install the module in your home directory:
 ```
 cd VirgoDC/python
-python ./setup.py install --user
+pip install . --user
 ```
-
 
 ### Layout of the module
 
