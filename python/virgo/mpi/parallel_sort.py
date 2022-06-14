@@ -224,7 +224,6 @@ def fetch_elements(arr, index, result=None, comm=None):
     index_find -= first_index_on_proc[comm_rank]
     values = arr[index_find,...]
     del index_find
-    gc.collect()
 
     # Send values back
     if result is None:
@@ -240,7 +239,6 @@ def fetch_elements(arr, index, result=None, comm=None):
                  values_recv.reshape((-1,)), nvalues*send_count, nvalues*send_displ,
                  comm=comm)
     del values
-    gc.collect()
 
     # Restore original order using index array
     values_recv[idx,...] = values_recv.copy()
@@ -439,7 +437,6 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
         arr[:] = arr[sort_idx1]
         if not(return_index):
             del sort_idx1
-            gc.collect()
 
         # Find global rank of first value to put on each processor
         split_rank = cumsum(nperproc) - nperproc
@@ -566,7 +563,6 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
         sort_idx2 = my_argsort(arr_tmp)
         arr[:] = arr_tmp[sort_idx2]
         del arr_tmp
-        gc.collect()
 
         #
         # Generate index array if necessary.
@@ -585,7 +581,6 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
                 index[:] += sum(nperproc[0:mycomm_rank], dtype=index_dtype)
             index = index[sort_idx1]
             del sort_idx1
-            gc.collect()
             # Exchange index data in same way as array values
             index_tmp = ndarray(sum(recv_count), dtype=index_dtype)
             my_alltoallv(index,     send_count, send_displ,
@@ -595,11 +590,9 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
             # Reorder local index data using index from final local sort
             index[:] = index_tmp[sort_idx2]
             del index_tmp
-            gc.collect()
 
         # Done with local sorting index
         del sort_idx2
-        gc.collect()
 
     else:
         if return_index:
@@ -670,7 +663,6 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
     if not(arr2_sorted):
         index_in = fetch_elements(index_in, sort_arr2, comm=comm)
         del sort_arr2
-        gc.collect()
 
     # Find range of arr2 values on each task after sorting
     min_on_task = ndarray(comm_size, dtype=arr2.dtype)
@@ -721,7 +713,6 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
                  arr1_recv, recv_count, recv_displ,
                  comm=comm)
     del arr1_ls
-    gc.collect()
 
     # For each imported arr1 element, find global rank of matching arr2 element
     ptr = searchsorted(arr2_ordered, arr1_recv, side="left")
@@ -730,12 +721,10 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
     ptr[arr2_ordered[ptr] != arr1_recv] = -1
     del arr1_recv
     del arr2_ordered
-    gc.collect()
     index_return = -ones(ptr.shape, dtype=index_dtype)
     index_return[ptr>=0] = index_in[ptr[ptr>=0]]
     del index_in
     del ptr
-    gc.collect()
 
     # Return the index info
     index_out = zeros(arr1.shape, dtype=index_dtype) - 1
@@ -743,14 +732,14 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
                  index_out,    send_count, send_displ,
                  comm=comm)
     del index_return
-    gc.collect()
+    garbage_collect()
 
     # Restore original order
     index = empty_like(index_out)
     index[idx] = index_out
     del index_out
     del idx
-    gc.collect()
+    garbage_collect()
 
     return index
 
