@@ -742,8 +742,110 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
     return index
 
 
+def parallel_unique(arr, comm=None, arr_sorted=False, return_counts=False,
+                    repartition_output=False):
+    """
+    Given a distributed array arr, return a new distributed
+    array which contains the sorted, unique elements in arr.
+
+    If return counts is true then also return another
+    distributed array with the number of instances of each
+    unique value.
+
+    If arr has already been parallel sorted, can set arr_sorted=True
+    to save some time. This will produce incorrect results if the
+    array has not been parallel sorted.
+
+    If repartition is True, try to leave similar numbers of
+    output elements on each MPI rank.
+    """
+
+    # Get communicator to use
+    from mpi4py import MPI
+    if comm is None:
+        comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
     
-def small_test():
+    # mpi4py doesn't like wrong endian data!
+    if not(arr.dtype.isnative):
+        print("parallel_sort.py: Unable to operate on non-native endian data!")
+        comm.Abort()
+
+    # Sanity checks on input arrays
+    if len(arr.shape) != 1:
+        print("Can only find unique elements in 1D arrays!")
+        comm.Abort()        
+
+    # Make a new communicator containing only processors
+    # which have data so we don't have to worry about empty
+    # arrays.
+    if arr.shape[0] > 0:
+        colour = 1
+    else:
+        colour = 0
+    key    = comm.Get_rank()
+    mycomm = comm.Split(colour, key)
+    mycomm_rank = mycomm.Get_rank()
+    mycomm_size = mycomm.Get_size()    
+
+    if colour == 1:
+
+        # Make a sorted copy of the input if necessary
+        if not arr_sorted:
+            arr = arr.copy()
+            parallel_sort(arr, comm=mycomm)
+
+        # Find unique elements on each rank
+        local_unique, local_count = unique(arr, return_counts=True)
+        del arr
+
+        # Gather value and count for first and last values on each rank
+        all_first_unique = mycomm.allgather(local_unique[0])
+        all_first_counts = mycomm.allgather(local_count[0])
+        all_last_unique = mycomm.allgather(local_unique[-1])
+        all_last_counts = mycomm.allgather(local_count[-1])
+
+        # Accumulate counts from later ranks which have instances of our last unique value
+        rank_nr = mycomm_rank + 1
+        while rank_nr < mycomm_size and all_first_unique[rank_nr] == all_last_unique[mycomm_rank]:
+            local_count[-1] += all_first_counts[rank_nr]
+            rank_nr += 1
+
+        # If our first unique value exists on the previous rank, zero out our count for this value
+        if mycomm_rank > 0 and all_first_unique[mycomm_rank] == all_last_unique[mycomm_rank-1]:
+            local_count[0] = 0
+            
+        # Discard values with zero count
+        keep = local_count > 0
+        local_unique = local_unique[keep]
+        local_count = local_count[keep]
+
+    else:
+        # This rank has no elements
+        local_unique = zeros(0, dtype=arr.dtype)
+        local_count = zeros(0, dtype=int)
+
+    mycomm.Free()
+
+    # Repartition if necessary
+    total_nr_unique = comm.allreduce(len(local_unique))
+    if repartition_output:
+        ndesired = zeros(comm_size, dtype=int)
+        ndesired[:] = total_nr_unique // comm_size
+        ndesired[:total_nr_unique % comm_size] += 1
+        assert ndesired.sum() == total_nr_unique
+        local_unique = repartition(local_unique, ndesired, comm=comm)
+        local_count = repartition(local_count, ndesired, comm=comm)
+
+    # Return the results
+    if return_counts:
+        return local_unique, local_count
+    else:
+        return local_unique
+
+    
+def test_small_sort():
     """Test sorting code on random arrays"""
 
     from mpi4py import MPI
@@ -826,7 +928,7 @@ def small_test():
 
 
   
-def big_test():
+def test_large_sort():
     """Try sorting lots of elements!"""
 
     nmax = int(sys.argv[1])
@@ -886,7 +988,7 @@ def big_test():
         print("Array is sorted correctly")
 
 
-def repartition_test():
+def test_repartition():
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
@@ -933,5 +1035,51 @@ def repartition_test():
             comm.Barrier()
 
 
+def test_unique():
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+
+    import numpy as np
+    random.seed(comm_rank)
+
+    nr_tests = 1000
+    max_size = 1000
+    max_value = 50
+
+    for test_nr in range(nr_tests):
+
+
+        # Create test dataset
+        nr_local_elements = random.randint(max_size)
+        nr_total_elements = comm.allreduce(nr_local_elements)
+        local_data = random.randint(max_value, size=nr_local_elements)
+        if comm_rank == 0:
+            print(f"Test {test_nr} with {nr_total_elements} elements")
+
+        # Find unique values
+        local_unique, local_counts = parallel_unique(local_data, comm=comm, return_counts=True, repartition_output=True)
+        print(comm_rank, local_unique)
+
+        # Combine values and counts on first rank
+        global_data = comm.gather(local_data)
+        global_unique = comm.gather(local_unique)
+        if comm_rank == 0:
+            global_data = concatenate(global_data)
+            global_unique = concatenate(global_unique)
+            check_unique = unique(global_data)
+            if any(global_unique != check_unique):
+                print(global_unique, check_unique)
+                raise RuntimeError("FAILED: Unique values do not match!")
+            else:
+                print("  - OK")
+
+    comm.Barrier()
+    if comm_rank == 0:
+        print("Done.")
+
+
 if __name__ == "__main__":
-    big_test()
+    test_unique()
