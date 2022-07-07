@@ -402,8 +402,11 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
     if comm is None:
         comm = MPI.COMM_WORLD
 
-    # Ensure input is an array
-    arr = np.asanyarray(arr)
+    # Ensure input is an array. Note that we don't use np.asanyarray here because
+    # if arr is an ndarray subclass we want to access the underlying ndarray for
+    # efficiency. This function doesn't return any values of the same type as the
+    # array so this does not affect the output.
+    arr = np.asarray(arr)
 
     # mpi4py doesn't like wrong endian data!
     if not(arr.dtype.isnative):
@@ -920,6 +923,78 @@ def test_parallel_sort_random_integers():
         print(f"  OK")
 
 
+def test_parallel_sort_random_unyt_floats():
+    """Test sorting code on random arrays of floats with units"""
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+
+    nr_tests = 200
+    max_local_size = 1000
+    max_value = 1.0e6
+
+    if comm_rank == 0:
+        print(f"Test sorting {nr_tests} random unyt arrays")
+
+    try:
+        import unyt
+    except ImportError:
+        if comm_rank == 0:
+            print("  Skipped (can't import unyt)")
+        return
+
+    for i in range(nr_tests):
+
+        # Make random test aray
+        n   = np.random.randint(max_local_size) + 0
+        arr = np.random.uniform(high=max_value, size=n)
+        arr = unyt.unyt_array(arr, units=unyt.cm)
+
+        # Keep a copy of the original
+        orig = arr.copy()
+
+        # Sort
+        index = parallel_sort(arr, return_index=True)
+
+        # Verify order locally
+        arr_sorted = arr.ndarray_view()
+        delta = arr_sorted[1:] - arr_sorted[:-1]
+        if np.any(delta<0.0):
+            print("Local values are not sorted correctly!")
+            comm.Abort()
+
+        # Check ordering between processors
+        if n > 0:
+            local_min = np.amin(arr_sorted)
+            local_max = np.amax(arr_sorted)
+        else:
+            local_min = 0
+            local_max = 0
+        all_min = np.asanyarray(comm.allgather(local_min))
+        all_max = np.asanyarray(comm.allgather(local_max))
+        all_n   = np.asanyarray(comm.allgather(n))
+        ind = (all_n > 0)
+        if np.sum(ind) > 1:
+            all_min = all_min[ind]
+            all_max = all_max[ind]
+            for rank in range(1, np.sum(ind)):
+                if all_min[rank] < all_max[rank-1]:
+                    print("Values are not sorted correctly between processors!")
+                    comm.Abort()
+
+        # Check that we can reconstruct the array using the index
+        arr_from_index = fetch_elements(orig, index)
+        if np.any(arr_from_index != arr):
+            print("Index doesn't work!")
+            print(comm_rank,"-", orig, arr, arr_from_index, index)
+            comm.Abort()
+
+    comm.Barrier()
+    if comm_rank == 0:
+        print(f"  OK")
+
   
 def test_large_sort():
     """Try sorting lots of elements!"""
@@ -1074,6 +1149,24 @@ def test_unique():
         print("Done.")
 
 
+def test():
+    test_parallel_sort_random_integers()
+    test_parallel_sort_random_unyt_floats()
+    
+
 if __name__ == "__main__":
 
-    test_parallel_sort_random_integers()
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+
+    if comm_rank == 0:
+        print(f"Running tests on {comm_size} MPI ranks")
+
+    test()
+
+    comm.barrier()
+    if comm_rank == 0:
+        print(f"All tests done")
+    
