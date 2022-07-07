@@ -282,8 +282,10 @@ def gather_to_2d_array(arr_in, comm):
     arr_in needs to be the same size on all tasks
     """
     comm_size = comm.Get_size()
+    mpi_type = mpi_datatype(arr_in.dtype)
     arr_out = np.empty_like(arr_in, shape=comm_size*len(arr_in), dtype=arr_in.dtype)
-    comm.Allgather(arr_in, arr_out)
+    comm.Allgather([arr_in, mpi_type], [arr_out, mpi_type])
+    mpi_type.Free()
     return arr_out.reshape((comm_size, len(arr_in)))
 
 
@@ -993,7 +995,7 @@ def test_parallel_sort_random_unyt_floats():
         print(f"  OK")
 
   
-def test_repartition():
+def test_repartition_random_integers():
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
@@ -1012,6 +1014,54 @@ def test_repartition():
         # Make random test aray
         n   = np.random.randint(max_local_size) + 0
         arr = np.random.randint(max_value, size=n)    
+
+        # Pick random destination for each element
+        dest   = np.random.randint(comm_size, size=n)
+
+        # Count elements we want on each processor
+        ndesired = np.zeros(comm_size, dtype=int)
+        for rank in range(comm_size):
+            nlocal = np.sum(dest==rank)
+            ndesired[rank] = comm.allreduce(nlocal)
+
+        # Repartition
+        new_arr = repartition(arr, ndesired)
+
+        # Verify result by gathering on rank 0
+        arr_gathered = np.concatenate(comm.allgather(arr))
+        new_arr_gathered = np.concatenate(comm.allgather(new_arr))
+        if comm_rank == 0:
+            if np.any(arr_gathered != new_arr_gathered):
+                raise RuntimeError("FAILED: Partitioned array is incorrect!")
+
+    comm.Barrier()
+    if comm_rank == 0:
+        print(f"  OK")
+
+
+def test_repartition_structured_array():
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+
+    nr_tests = 200
+    max_local_size = 1000
+    max_value = 20
+
+    dtype = np.dtype([("a", int), ("b", int)])
+
+    if comm_rank == 0:
+        print(f"Test repartitioning {nr_tests} random structured arrays")
+
+    for i in range(nr_tests):
+
+        # Make random test aray
+        n   = np.random.randint(max_local_size) + 0
+        arr = np.ndarray(n, dtype=dtype)
+        arr["a"] = np.random.randint(max_value, size=n)
+        arr["b"] = np.random.randint(max_value, size=n)
 
         # Pick random destination for each element
         dest   = np.random.randint(comm_size, size=n)
@@ -1089,7 +1139,8 @@ def test():
     try:
         test_parallel_sort_random_integers()
         test_parallel_sort_random_unyt_floats()
-        test_repartition()
+        test_repartition_random_integers()
+        test_repartition_structured_array()
         test_unique()
     except RuntimeError as e:
         print(e)
