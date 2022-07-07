@@ -2,14 +2,14 @@
 
 from __future__ import print_function
 
-from numpy  import *
+import numpy as np
 
 import time
 import sys
 import gc
 
 # Type to use for global indexes
-index_dtype = int64
+index_dtype = np.int64
 
 
 def mpi_datatype(dtype):
@@ -42,7 +42,6 @@ def my_alltoallv(sendbuf, send_count, send_offset,
     
     # Maximum number of elements per message: avoid messages > 2GB
     assert sendbuf.dtype == recvbuf.dtype
-    #nchunk = ((2**31)-1) // sendbuf.dtype.itemsize
     nchunk = (100*1024*1024) // sendbuf.dtype.itemsize
 
     # Get communicator to use
@@ -94,7 +93,7 @@ def my_argsort(arr):
     # Use mergesort because
     # - it's stable (affects behaviour of parallel_match if duplicate values exist)
     # - it's worst case performance is reasonable
-    return argsort(arr, kind='mergesort')
+    return np.argsort(arr, kind='mergesort')
 
 
 
@@ -109,7 +108,7 @@ def repartition(arr, ndesired, comm=None):
     comm_size = comm.Get_size()
 
     # Make sure input is an array
-    arr   = asarray(arr)
+    arr = np.asanyarray(arr)
 
     # Get number of elements in dimensions after the first
     nvalues = 1
@@ -128,11 +127,11 @@ def repartition(arr, ndesired, comm=None):
         comm.Abort()
 
     # Find first index on each processor
-    first_on_proc_in  = cumsum(nperproc) - nperproc
-    first_on_proc_out = cumsum(ndesired) - ndesired
+    first_on_proc_in  = np.cumsum(nperproc) - nperproc
+    first_on_proc_out = np.cumsum(ndesired) - ndesired
 
     # Count elements to go to each other processor
-    send_count = zeros(comm_size, dtype=index_dtype)
+    send_count = np.zeros(comm_size, dtype=index_dtype)
     for rank in range(comm_size):
         # Find range of elements to go to this other processor
         ifirst = first_on_proc_out[rank]
@@ -144,14 +143,14 @@ def repartition(arr, ndesired, comm=None):
         send_count[rank] = max((0,ilast-ifirst+1))
 
     # Transfer the data
-    send_displ = cumsum(send_count) - send_count
-    recv_count = ndarray(comm_size, dtype=index_dtype)
+    send_displ = np.cumsum(send_count) - send_count
+    recv_count = np.ndarray(comm_size, dtype=index_dtype)
     comm.Alltoall(send_count, recv_count)
     recv_displ = cumsum(recv_count) - recv_count
 
     shape = list(arr.shape)
     shape[0] = sum(recv_count)
-    arr_return = empty_like(arr, shape=shape, dtype=arr.dtype)
+    arr_return = np.empty_like(arr, shape=shape, dtype=arr.dtype)
     my_alltoallv(arr.reshape((-1,)),        nvalues*send_count, nvalues*send_displ,
                  arr_return.reshape((-1,)), nvalues*recv_count, nvalues*recv_displ,
                  comm=comm)
@@ -189,8 +188,8 @@ def fetch_elements(arr, index, result=None, comm=None):
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
 
-    #arr   = asarray(arr)
-    index = asarray(index, dtype=index_dtype)
+    arr = np.asanyarray(arr)
+    index = np.asanyarray(index, dtype=index_dtype)
 
     # Get number of elements in dimensions after the first
     nvalues = 1
@@ -208,21 +207,21 @@ def fetch_elements(arr, index, result=None, comm=None):
     index = index[idx]
 
     # Find first index on each processor
-    first_index_on_proc = cumsum(nperproc_in) - nperproc_in
+    first_index_on_proc = np.cumsum(nperproc_in) - nperproc_in
     
     # Find first and last element to retrieve from each other processor
-    ifirst = searchsorted(index, first_index_on_proc)
+    ifirst = np.searchsorted(index, first_index_on_proc)
     ilast = ifirst.copy()
     ilast[:-1] = ifirst[1:] - 1
     ilast[-1] = index.shape[0] - 1
 
     # Send indexes to fetch to processors which have the data
-    send_count = asarray(ilast-ifirst+1, dtype=index_dtype)
-    send_displ = cumsum(send_count) - send_count
-    recv_count = ndarray(comm_size, dtype=index_dtype)
+    send_count = np.asarray(ilast-ifirst+1, dtype=index_dtype)
+    send_displ = np.cumsum(send_count) - send_count
+    recv_count = np.ndarray(comm_size, dtype=index_dtype)
     comm.Alltoall(send_count, recv_count)
-    recv_displ = cumsum(recv_count) - recv_count
-    index_find = ndarray(sum(recv_count), dtype=index_dtype)
+    recv_displ = np.cumsum(recv_count) - recv_count
+    index_find = np.ndarray(sum(recv_count), dtype=index_dtype)
     my_alltoallv(index,      send_count, send_displ,
                  index_find, recv_count, recv_displ,
                  comm=comm)
@@ -237,7 +236,7 @@ def fetch_elements(arr, index, result=None, comm=None):
         # Will return result, so allocate storage
         shape = list(arr.shape)
         shape[0] = index.shape[0]
-        values_recv = empty_like(arr, shape=shape)
+        values_recv = np.empty_like(arr, shape=shape)
     else:
         # Will put result in supplied array
         values_recv = result
@@ -258,20 +257,20 @@ def fetch_elements(arr, index, result=None, comm=None):
 def weighted_median(arr, weight):
     """Return the median of array 'arr' weighted by 'weight'"""    
     # Convert input to numpy arrays if necessary
-    arr = asarray(arr)
-    weight = asarray(weight, dtype=float64)
+    arr = np.asanyarray(arr)
+    weight = np.asanyarray(weight, dtype=np.float64)
     # Sort into ascending order
     idx    = my_argsort(arr)
     arr    = arr[idx]
     weight = weight[idx]
     # Normalize so weights add up to 1
-    weight = weight / sum(weight)
+    weight = weight / np.sum(weight)
     # Find weight of all previous entries for each element
-    wbefore = cumsum(weight) - weight
+    wbefore = np.cumsum(weight) - weight
     # Find weight of subsequent entries for each element
-    wafter  = 1.0 - cumsum(weight)
+    wafter  = 1.0 - np.cumsum(weight)
     # Find elements with <0.5 on either side
-    ind = logical_and(wbefore<=0.5,wafter<=0.5)
+    ind = np.logical_and(wbefore<=0.5,wafter<=0.5)
     return arr[ind][0]
 
 
@@ -283,7 +282,7 @@ def gather_to_2d_array(arr_in, comm):
     arr_in needs to be the same size on all tasks
     """
     comm_size = comm.Get_size()
-    arr_out = empty_like(arr_in, shape=comm_size*len(arr_in), dtype=arr_in.dtype)
+    arr_out = np.empty_like(arr_in, shape=comm_size*len(arr_in), dtype=arr_in.dtype)
     comm.Allgather(arr_in, arr_out)
     return arr_out.reshape((comm_size, len(arr_in)))
 
@@ -305,31 +304,35 @@ def find_splitting_points(arr, r, comm=None):
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
 
+    # Ensure inputs are arrays
+    arr = np.asanyarray(arr)
+    r = np.asanyarray(r)
+
     # Get number of elements per processor
-    nperproc = asarray(comm.allgather(len(arr)))
+    nperproc = np.asarray(comm.allgather(len(arr)))
 
     # Arrays with one element per rank to find
     nranks = len(r)
-    imin = zeros(nranks, dtype=int64)
-    imax = ones( nranks, dtype=int64) * (len(arr) - 1)
-    done = zeros(nranks, dtype=bool)
+    imin = np.zeros(nranks, dtype=index_dtype)
+    imax = np.ones( nranks, dtype=index_dtype) * (len(arr) - 1)
+    done = np.zeros(nranks, dtype=bool)
 
-    local_median = zeros(nranks, dtype=arr.dtype)
-    weight       = zeros(nranks, dtype=float)
-    est_median   = zeros(nranks, dtype=arr.dtype)
+    local_median = np.zeros(nranks, dtype=arr.dtype)
+    weight       = np.zeros(nranks, dtype=float)
+    est_median   = np.zeros(nranks, dtype=arr.dtype)
 
     # Arrays with result
-    res_median   = zeros(nranks, dtype=arr.dtype)
-    res_min_rank = zeros(nranks, dtype=int64)
-    res_max_rank = zeros(nranks, dtype=int64)
+    res_median   = np.zeros(nranks, dtype=arr.dtype)
+    res_min_rank = np.zeros(nranks, dtype=index_dtype)
+    res_max_rank = np.zeros(nranks, dtype=index_dtype)
 
     # Iterate until we find all splitting points
     while any(done==False):
 
         # Estimate median of elements in active ranges for each rank
-        nlocal  = maximum(0,imax-imin+1  )              # Array with local size of active range for each rank
+        nlocal  = np.maximum(0,imax-imin+1)             # Array with local size of active range for each rank
         nactive     = gather_to_2d_array(nlocal, comm)
-        nactive_sum = sum(nactive, axis=0)              # sum over tasks, gives one element per rank
+        nactive_sum = np.sum(nactive, axis=0)              # sum over tasks, gives one element per rank
         for i in range(nranks):
             if nlocal[i] > 0 and not(done[i]):
                 local_median[i] = arr[imin[i]+nlocal[i]//2]
@@ -351,12 +354,12 @@ def find_splitting_points(arr, r, comm=None):
 
         # Find first and last elements where estimated medians
         # can be inserted in sorted array
-        ifirst = searchsorted(arr, est_median, side='left')
-        ilast  = searchsorted(arr, est_median, side='right')
+        ifirst = np.searchsorted(arr, est_median, side='left')
+        ilast  = np.searchsorted(arr, est_median, side='right')
         ifirst_all = gather_to_2d_array(ifirst, comm) # Returns 2D array of size [comm_size, nranks]
         ilast_all  = gather_to_2d_array(ilast, comm)
-        fsum = sum(ifirst_all, axis=0, dtype=int64) # Sum over tasks, leaves one element per rank to find
-        lsum = sum(ilast_all,  axis=0, dtype=int64)
+        fsum = np.sum(ifirst_all, axis=0, dtype=index_dtype) # Sum over tasks, leaves one element per rank to find
+        lsum = np.sum(ilast_all,  axis=0, dtype=index_dtype)
 
         for i in range(nranks):
             if not done[i]:
@@ -399,6 +402,9 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
     if comm is None:
         comm = MPI.COMM_WORLD
 
+    # Ensure input is an array
+    arr = np.asanyarray(arr)
+
     # mpi4py doesn't like wrong endian data!
     if not(arr.dtype.isnative):
         print("parallel_sort.py: Unable to operate on non-native endian data!")
@@ -435,7 +441,7 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
         # Find total number of elements
         n           = arr.shape[0]
         nperproc    = mycomm.allgather(n)
-        ntot        = sum(nperproc)
+        ntot        = np.sum(nperproc)
 
         # Sort array locally
         if verbose and mycomm_rank==0:
@@ -446,7 +452,7 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
             del sort_idx1
 
         # Find global rank of first value to put on each processor
-        split_rank = cumsum(nperproc) - nperproc
+        split_rank = np.cumsum(nperproc) - nperproc
 
         # Find values at which we want to split the sorted
         # array and also minimum and maximum global ranks
@@ -463,20 +469,20 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
         # Find out how many instances of each splitting value we have
         # on each processor
         if arr.shape[0] > 0:
-            first_ind  = searchsorted(arr, val, side='left')
-            last_ind   = searchsorted(arr, val, side='right') - 1
+            first_ind  = np.searchsorted(arr, val, side='left')
+            last_ind   = np.searchsorted(arr, val, side='right') - 1
             nval_local = last_ind - first_ind + 1
             first_ind[first_ind >= len(arr)] = len(arr) - 1
             nval_local[arr[first_ind] != val] = 0 
         else:
-            nval_local = zeros(len(val), dtype=index_dtype)
-        nval_local = asarray(nval_local, dtype=index_dtype)
+            nval_local = np.zeros(len(val), dtype=index_dtype)
+        nval_local = np.asarray(nval_local, dtype=index_dtype)
 
         # Find out how many instances of each value there are on each
         # lower ranked processor - indexes are (iproc, ival) after gather.
-        nval_all = ndarray((mycomm_size, mycomm_size), dtype=index_dtype)
+        nval_all = np.ndarray((mycomm_size, mycomm_size), dtype=index_dtype)
         mycomm.Allgather(nval_local, nval_all) 
-        nval_lower = zeros(len(val), dtype=index_dtype)
+        nval_lower = np.zeros(len(val), dtype=index_dtype)
         for ival in range(len(val)):
             if mycomm_rank > 0:
                 nval_lower[ival] = sum(nval_all[0:mycomm_rank,ival])
@@ -488,14 +494,14 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
         if verbose and mycomm_rank==0:
             print("Determining destination for each element, t = ", time.time()-t0)
         first_to_send = 0
-        send_count = zeros(mycomm_size, dtype=index_dtype)
+        send_count = np.zeros(mycomm_size, dtype=index_dtype)
 
         # Find array indexes of splitting point values
         # It's much faster to do this in one pass here than to do
         # each one separately inside the loop below.
-        ranks = arange(mycomm_size, dtype=int32)
-        val_first_index_arr = searchsorted(arr, val[ranks], side='left')
-        val_last_index_arr  = searchsorted(arr, val[ranks], side='right') - 1
+        ranks = np.arange(mycomm_size, dtype=np.int32)
+        val_first_index_arr = np.searchsorted(arr, val[ranks], side='left')
+        val_last_index_arr  = np.searchsorted(arr, val[ranks], side='right') - 1
 
         # Loop over destination processors
         for rank in range(mycomm_size):
@@ -551,15 +557,15 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
             first_to_send = max((first_to_send, last_to_send + 1))
 
         # Calculate counts and offsets for alltoallv
-        send_displ = cumsum(send_count) - send_count
-        recv_count = ndarray(mycomm_size, dtype=index_dtype)
+        send_displ = np.cumsum(send_count) - send_count
+        recv_count = np.ndarray(mycomm_size, dtype=index_dtype)
         mycomm.Alltoall(send_count, recv_count)
-        recv_displ = cumsum(recv_count) - recv_count
+        recv_displ = np.cumsum(recv_count) - recv_count
 
         # Exchange data
         if verbose and mycomm_rank==0:
             print("Exchanging data, t = ", time.time()-t0)
-        arr_tmp = empty_like(arr, shape=sum(recv_count), dtype=arr.dtype)
+        arr_tmp = np.empty_like(arr, shape=sum(recv_count))
         my_alltoallv(arr,     send_count, send_displ,
                      arr_tmp, recv_count, recv_displ,
                      comm=mycomm)
@@ -583,13 +589,13 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
                 print("Making index array, t = ", time.time()-t0)
             # Rearrange indices using index from initial local sort
             # of the data array
-            index = arange(arr.shape[0], dtype=index_dtype)
+            index = np.arange(arr.shape[0], dtype=index_dtype)
             if mycomm_rank > 0:
-                index[:] += sum(nperproc[0:mycomm_rank], dtype=index_dtype)
+                index[:] += np.sum(nperproc[0:mycomm_rank], dtype=index_dtype)
             index = index[sort_idx1]
             del sort_idx1
             # Exchange index data in same way as array values
-            index_tmp = ndarray(sum(recv_count), dtype=index_dtype)
+            index_tmp = np.ndarray(sum(recv_count), dtype=index_dtype)
             my_alltoallv(index,     send_count, send_displ,
                          index_tmp, recv_count, recv_displ,
                          comm=mycomm)
@@ -604,7 +610,7 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
     else:
         if return_index:
             # No elements here, so return empty array
-            index = ndarray(0, dtype=index_dtype)
+            index = np.ndarray(0, dtype=index_dtype)
 
     if verbose and mycomm_rank==0:
         print("Parallel sort finished, t = ", time.time()-t0)
@@ -638,10 +644,9 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
     
-    # mpi4py doesn't like wrong endian data!
-    if not(arr1.dtype.isnative) or not(arr2.dtype.isnative):
-        print("parallel_sort.py: Unable to operate on non-native endian data!")
-        comm.Abort()
+    # Ensure inputs are array-like
+    arr1 = np.asanyarray(arr1)
+    arr2 = np.asanyarray(arr2)
 
     # Sanity checks on input arrays
     if len(arr1.shape) != 1 or len(arr2.shape) != 1:
@@ -650,11 +655,11 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
 
     # If arr1 has no elements we just return an empty index array
     if comm.allreduce(arr1.shape[0]) == 0:
-        return ndarray(0, dtype=index_dtype)
+        return np.ndarray(0, dtype=index_dtype)
 
     # If arr2 has no elements then nothing will match
     if comm.allreduce(arr2.shape[0]) == 0:
-        return -ones(arr1.shape, dtype=index_dtype)
+        return -np.ones(arr1.shape, dtype=index_dtype)
 
     # Make a sorted copy of arr2 if necessary
     if not(arr2_sorted):
@@ -664,27 +669,27 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
         arr2_ordered = arr2
 
     # Make array of initial indexes of arr2 elements and arrange in sorted order
-    n_per_task = asarray(comm.allgather(arr2.shape[0]), dtype=index_dtype)
-    first_on_task = cumsum(n_per_task) - n_per_task
-    index_in = arange(arr2.shape[0], dtype=index_dtype) + first_on_task[comm_rank]
+    n_per_task = np.asarray(comm.allgather(arr2.shape[0]), dtype=index_dtype)
+    first_on_task = np.cumsum(n_per_task) - n_per_task
+    index_in = np.arange(arr2.shape[0], dtype=index_dtype) + first_on_task[comm_rank]
     if not(arr2_sorted):
         index_in = fetch_elements(index_in, sort_arr2, comm=comm)
         del sort_arr2
 
     # Find range of arr2 values on each task after sorting
-    min_on_task = ndarray(comm_size, dtype=arr2.dtype)
-    max_on_task = ndarray(comm_size, dtype=arr2.dtype)
+    min_on_task = np.ndarray(comm_size, dtype=arr2.dtype)
+    max_on_task = np.ndarray(comm_size, dtype=arr2.dtype)
     if arr2_ordered.shape[0] > 0:
-        min_val = amin(arr2_ordered)
-        max_val = amax(arr2_ordered)
+        min_val = np.amin(arr2_ordered)
+        max_val = np.amax(arr2_ordered)
     else:
         # If there are no values set min and max to zero
-        min_val = asarray(0, dtype=arr2_ordered.dtype)
-        max_val = asarray(0, dtype=arr2_ordered.dtype)
+        min_val = np.asarray(0, dtype=arr2_ordered.dtype)
+        max_val = np.asarray(0, dtype=arr2_ordered.dtype)
     comm.Allgather(min_val, min_on_task)
     comm.Allgather(max_val, max_on_task)
     # Record which tasks have >0 arr2 elements
-    have_arr2 = asarray(comm.allgather(arr2_ordered.shape[0] > 0), dtype=bool)
+    have_arr2 = np.asarray(comm.allgather(arr2_ordered.shape[0] > 0), dtype=bool)
 
     # Sort local arr1 values
     idx = my_argsort(arr1)
@@ -693,55 +698,55 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
     # Decide which elements of arr1 to send to which tasks
     # Handle duplicate values in arr2 by sending to lowest numbered task.
     # First we calculate offsets and counts for tasks with >0 elements in arr2.
-    send_displ      = searchsorted(arr1_ls, min_on_task[have_arr2], side="left")
-    send_displ_next = searchsorted(arr1_ls, max_on_task[have_arr2], side="right")
+    send_displ      = np.searchsorted(arr1_ls, min_on_task[have_arr2], side="left")
+    send_displ_next = np.searchsorted(arr1_ls, max_on_task[have_arr2], side="right")
     if sum(have_arr2) > 1:
         send_displ[1:] = send_displ_next[:-1]
     send_count = send_displ_next - send_displ
     send_count[send_count<0] = 0
-    assert sum(send_count) <= arr1_ls.shape[0]
+    assert np.sum(send_count) <= arr1_ls.shape[0]
     assert all(send_displ >= 0)
     assert all(send_displ+send_count <= arr1_ls.shape[0])
 
     # Expand displacement and count arrays to include tasks with no arr2 elements
-    send_displ_all = zeros(comm_size, dtype=send_displ.dtype)
+    send_displ_all = np.zeros(comm_size, dtype=send_displ.dtype)
     send_displ_all[have_arr2] = send_displ
-    send_count_all = zeros(comm_size, dtype=send_count.dtype)
+    send_count_all = np.zeros(comm_size, dtype=send_count.dtype)
     send_count_all[have_arr2] = send_count # Needs to be zero where have_arr2 is false
     send_count = send_count_all
     send_displ = send_displ_all
 
     # Transfer the data
-    recv_count = ndarray(comm_size, dtype=index_dtype)
+    recv_count = np.ndarray(comm_size, dtype=index_dtype)
     comm.Alltoall(send_count, recv_count)
-    recv_displ = cumsum(recv_count) - recv_count
-    arr1_recv = ndarray(sum(recv_count), dtype=arr1.dtype)
+    recv_displ = np.cumsum(recv_count) - recv_count
+    arr1_recv = np.ndarray(np.sum(recv_count), dtype=arr1.dtype)
     my_alltoallv(arr1_ls,   send_count, send_displ,
                  arr1_recv, recv_count, recv_displ,
                  comm=comm)
     del arr1_ls
 
     # For each imported arr1 element, find global rank of matching arr2 element
-    ptr = searchsorted(arr2_ordered, arr1_recv, side="left")
+    ptr = np.searchsorted(arr2_ordered, arr1_recv, side="left")
     ptr[ptr<0] = 0
     ptr[ptr>=arr2_ordered.shape[0]] = 0 
     ptr[arr2_ordered[ptr] != arr1_recv] = -1
     del arr1_recv
     del arr2_ordered
-    index_return = -ones(ptr.shape, dtype=index_dtype)
+    index_return = -np.ones(ptr.shape, dtype=index_dtype)
     index_return[ptr>=0] = index_in[ptr[ptr>=0]]
     del index_in
     del ptr
 
     # Return the index info
-    index_out = zeros(arr1.shape, dtype=index_dtype) - 1
+    index_out = np.zeros(arr1.shape, dtype=index_dtype) - 1
     my_alltoallv(index_return, recv_count, recv_displ,
                  index_out,    send_count, send_displ,
                  comm=comm)
     del index_return
 
     # Restore original order
-    index = empty_like(index_out)
+    index = np.empty_like(index_out)
     index[idx] = index_out
     del index_out
     del idx
@@ -773,11 +778,9 @@ def parallel_unique(arr, comm=None, arr_sorted=False, return_counts=False,
         comm = MPI.COMM_WORLD
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
-    
-    # mpi4py doesn't like wrong endian data!
-    if not(arr.dtype.isnative):
-        print("parallel_sort.py: Unable to operate on non-native endian data!")
-        comm.Abort()
+
+    # Ensure input is an array
+    arr = np.asanyarray(arr)
 
     # Sanity checks on input arrays
     if len(arr.shape) != 1:
@@ -804,7 +807,7 @@ def parallel_unique(arr, comm=None, arr_sorted=False, return_counts=False,
             parallel_sort(arr, comm=mycomm)
 
         # Find unique elements on each rank
-        local_unique, local_count = unique(arr, return_counts=True)
+        local_unique, local_count = np.unique(arr, return_counts=True)
         del arr
 
         # Gather value and count for first and last values on each rank
@@ -830,15 +833,15 @@ def parallel_unique(arr, comm=None, arr_sorted=False, return_counts=False,
 
     else:
         # This rank has no elements
-        local_unique = zeros(0, dtype=arr.dtype)
-        local_count = zeros(0, dtype=int)
+        local_unique = np.zeros(0, dtype=arr.dtype)
+        local_count = np.zeros(0, dtype=int)
 
     mycomm.Free()
 
     # Repartition if necessary
     total_nr_unique = comm.allreduce(len(local_unique))
     if repartition_output:
-        ndesired = zeros(comm_size, dtype=int)
+        ndesired = np.zeros(comm_size, dtype=int)
         ndesired[:] = total_nr_unique // comm_size
         ndesired[:total_nr_unique % comm_size] += 1
         assert ndesired.sum() == total_nr_unique
@@ -852,46 +855,32 @@ def parallel_unique(arr, comm=None, arr_sorted=False, return_counts=False,
         return local_unique
 
     
-def test_small_sort():
-    """Test sorting code on random arrays"""
+def test_parallel_sort_random_integers():
+    """Test sorting code on random arrays of integers"""
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
 
-    for i in range(2000):
+    nr_tests = 200
+    max_local_size = 1000
+    max_value = 10
 
-        if comm_rank == 0:
-            print("Test ", i)
+    if comm_rank == 0:
+        print(f"Test sorting {nr_tests} random arrays of integers")
+
+    for i in range(nr_tests):
 
         # Make random test aray
-        n   = random.randint(200) + 0
-        arr = random.randint(10, size=n)
-
-        # Write out input
-        for rank in range(comm_size):
-            if comm_rank == rank:
-                print(comm_rank,":",arr)
-                sys.stdout.flush()
-            comm.Barrier()
+        n   = np.random.randint(max_local_size) + 0
+        arr = np.random.randint(max_value, size=n)
 
         # Keep a copy of the original
         orig = arr.copy()
 
         # Sort
-        if comm_rank == 0:
-            print("start sorting")
         index = parallel_sort(arr, return_index=True)
-        if comm_rank == 0:
-            print("done sorting")
-            
-        # Write out results
-        for rank in range(comm_size):
-            if comm_rank == rank:
-                print(comm_rank,":",arr)
-                sys.stdout.flush()
-            comm.Barrier()
 
         # Verify order locally
         arr_sorted = arr
@@ -902,36 +891,33 @@ def test_small_sort():
 
         # Check ordering between processors
         if n > 0:
-            local_min = amin(arr_sorted)
-            local_max = amax(arr_sorted)
+            local_min = np.amin(arr_sorted)
+            local_max = np.amax(arr_sorted)
         else:
             local_min = 0
             local_max = 0
-        all_min = comm.allgather(local_min)
-        all_max = comm.allgather(local_max)
-        all_n   = comm.allgather(n)
+        all_min = np.asanyarray(comm.allgather(local_min))
+        all_max = np.asanyarray(comm.allgather(local_max))
+        all_n   = np.asanyarray(comm.allgather(n))
         ind = (all_n > 0)
-        if sum(ind) > 1:
+        if np.sum(ind) > 1:
             all_min = all_min[ind]
             all_max = all_max[ind]
-            for rank in range(1, sum(ind)):
+            for rank in range(1, np.sum(ind)):
                 if all_min[rank] < all_max[rank-1]:
                     print("Values are not sorted correctly between processors!")
                     comm.Abort()
 
         # Check that we can reconstruct the array using the index
         arr_from_index = fetch_elements(orig, index)
-        if any(arr_from_index != arr):
+        if np.any(arr_from_index != arr):
             print("Index doesn't work!")
             print(comm_rank,"-", orig, arr, arr_from_index, index)
             comm.Abort()
-        else:
-            if comm_rank==0:
-                print("Index is ok")
 
-        comm.Barrier()
-        if comm_rank == 0:
-            print("Array is sorted correctly")
+    comm.Barrier()
+    if comm_rank == 0:
+        print(f"  OK")
 
 
   
@@ -946,9 +932,9 @@ def test_large_sort():
     comm_size = comm.Get_size()
 
     # Test parallel sort routine - first generate test dataset
-    random.seed(35915)
-    n   = int((random.rand() + 0.1) * nmax)
-    arr = random.rand(n)
+    np.random.seed(35915)
+    n   = int((np.random.rand() + 0.1) * nmax)
+    arr = np.random.rand(n)
     ntot1 = comm.allreduce(arr.shape[0])
 
     if comm_rank == 0:
@@ -966,25 +952,25 @@ def test_large_sort():
     # Verify order locally
     arr_sorted = arr
     delta = arr_sorted[1:] - arr_sorted[:-1]
-    if any(delta<0.0):
+    if np.any(delta<0.0):
         print("Local values are not sorted correctly!")
         comm.Abort()
 
     # Check ordering between processors
     if n > 0:
-        local_min = amin(arr_sorted)
-        local_max = amax(arr_sorted)
+        local_min = np.amin(arr_sorted)
+        local_max = np.amax(arr_sorted)
     else:
         local_min = 0
         local_max = 0
-    all_min = asarray(comm.allgather(local_min))
-    all_max = asarray(comm.allgather(local_max))
-    all_n   = asarray(comm.allgather(n))
+    all_min = np.asarray(comm.allgather(local_min))
+    all_max = np.asarray(comm.allgather(local_max))
+    all_n   = np.asarray(comm.allgather(n))
     ind = (all_n > 0)
-    if sum(ind) > 1:
+    if np.sum(ind) > 1:
         all_min = all_min[ind]
         all_max = all_max[ind]
-        for rank in range(1, sum(ind)):
+        for rank in range(1, np.sum(ind)):
             if all_min[rank] < all_max[rank-1]:
                 print("Values are not sorted correctly between processors!")
                 comm.Abort()
@@ -1008,8 +994,8 @@ def test_repartition():
             print("Test ", i)
 
         # Make random test aray
-        n   = random.randint(5) + 0
-        arr = random.randint(10, size=n)    
+        n   = np.random.randint(5) + 0
+        arr = np.random.randint(10, size=n)    
 
         # Write out input
         for rank in range(comm_size):
@@ -1019,12 +1005,12 @@ def test_repartition():
             comm.Barrier()        
 
         # Pick random destination for each element
-        dest   = random.randint(comm_size, size=n)
+        dest   = np.random.randint(comm_size, size=n)
 
         # Count elements we want on each processor
-        ndesired = zeros(comm_size, dtype=int)
+        ndesired = np.zeros(comm_size, dtype=int)
         for rank in range(comm_size):
-            nlocal = sum(dest==rank)
+            nlocal = np.sum(dest==rank)
             ndesired[rank] = comm.allreduce(nlocal)
 
         print(comm_rank, "- Ndesired = ", ndesired)
@@ -1049,8 +1035,7 @@ def test_unique():
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
 
-    import numpy as np
-    random.seed(comm_rank)
+    np.random.seed(comm_rank)
 
     nr_tests = 1000
     max_size = 1000
@@ -1060,14 +1045,15 @@ def test_unique():
 
 
         # Create test dataset
-        nr_local_elements = random.randint(max_size)
+        nr_local_elements = np.random.randint(max_size)
         nr_total_elements = comm.allreduce(nr_local_elements)
-        local_data = random.randint(max_value, size=nr_local_elements)
+        local_data = np.random.randint(max_value, size=nr_local_elements)
         if comm_rank == 0:
             print(f"Test {test_nr} with {nr_total_elements} elements")
 
         # Find unique values
-        local_unique, local_counts = parallel_unique(local_data, comm=comm, return_counts=True, repartition_output=True)
+        local_unique, local_counts = parallel_unique(local_data, comm=comm, return_counts=True,
+                                                     repartition_output=True)
         print(comm_rank, local_unique)
 
         # Combine values and counts on first rank
@@ -1077,7 +1063,7 @@ def test_unique():
             global_data = concatenate(global_data)
             global_unique = concatenate(global_unique)
             check_unique = unique(global_data)
-            if any(global_unique != check_unique):
+            if np.any(global_unique != check_unique):
                 print(global_unique, check_unique)
                 raise RuntimeError("FAILED: Unique values do not match!")
             else:
@@ -1089,4 +1075,5 @@ def test_unique():
 
 
 if __name__ == "__main__":
-    test_unique()
+
+    test_parallel_sort_random_integers()
