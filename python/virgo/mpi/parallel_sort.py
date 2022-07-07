@@ -11,7 +11,26 @@ import gc
 # Type to use for global indexes
 index_dtype = int64
 
+
+def mpi_datatype(dtype):
+    """
+    Return an MPI datatype corresponding to the supplied numpy type.
+    """
     
+    # Deal with types which have explicit big or little endian byte order
+    # but are still native endian really
+    if ((sys.byteorder == 'little' and dtype.byteorder == '<') or
+        (sys.byteorder == 'big' and dtype.byteorder == '>')):
+        dtype = dtype.newbyteorder("=")
+    
+    # Create the new MPI type
+    import mpi4py.util.dtlib
+    mpi_type = mpi4py.util.dtlib.from_numpy_dtype(dtype)
+    mpi_type.Commit()
+
+    return mpi_type
+
+
 def my_alltoallv(sendbuf, send_count, send_offset,
                  recvbuf, recv_count, recv_offset,
                  comm=None):
@@ -36,6 +55,10 @@ def my_alltoallv(sendbuf, send_count, send_offset,
     while(2**ptask < comm_size):
         ptask += 1
 
+    # Find MPI data types
+    mpi_type_send = mpi_datatype(sendbuf.dtype)
+    mpi_type_recv = mpi_datatype(recvbuf.dtype)
+
     # Loop over pairs of processes and send data
     for ngrp in range(2**ptask):
         rank = comm_rank ^ ngrp
@@ -51,15 +74,19 @@ def my_alltoallv(sendbuf, send_count, send_offset,
                 num_to_send = min((left_to_send, nchunk))
                 num_to_recv = min((left_to_recv, nchunk))
                 # Transfer the data
-                comm.Sendrecv(sendbuf[current_send_offset:current_send_offset+num_to_send], rank, 0,
-                              recvbuf[current_recv_offset:current_recv_offset+num_to_recv], rank, 0)
+                send_buf_spec = [sendbuf[current_send_offset:current_send_offset+num_to_send], mpi_type_send]
+                recv_buf_spec = [recvbuf[current_recv_offset:current_recv_offset+num_to_recv], mpi_type_recv]
+                comm.Sendrecv(send_buf_spec, rank, 0, recv_buf_spec, rank, 0)
                 # Update counts and offsets
                 left_to_send        -= num_to_send
                 current_send_offset += num_to_send
                 left_to_recv        -= num_to_recv
                 current_recv_offset += num_to_recv
 
-        
+    mpi_type_send.Free()
+    mpi_type_recv.Free()
+
+
 def my_argsort(arr):
     """
     Determines serial sorting algorithm used.
@@ -81,18 +108,8 @@ def repartition(arr, ndesired, comm=None):
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
 
-    # mpi4py doesn't like wrong endian data!
-    if not(arr.dtype.isnative):
-        print("parallel_sort.py: Unable to operate on non-native endian data!")
-        comm.Abort()
-
     # Make sure input is an array
     arr   = asarray(arr)
-
-    # Sanity checks on input arrays
-    #if len(arr.shape) != 1:
-    #    print "Can only repartition 1D array data!"
-    #    comm.Abort()
 
     # Get number of elements in dimensions after the first
     nvalues = 1
@@ -172,18 +189,8 @@ def fetch_elements(arr, index, result=None, comm=None):
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
 
-    # mpi4py doesn't like wrong endian data!
-    if not(arr.dtype.isnative):
-        print("parallel_sort.py: Unable to operate on non-native endian data!")
-        comm.Abort()
-
     #arr   = asarray(arr)
     index = asarray(index, dtype=index_dtype)
-
-    # Sanity checks on input arrays
-    #if len(arr.shape) != 1 or len(index.shape) != 1:
-    #    print "Can only fetch elements from 1D array data!"
-    #    comm.Abort()
 
     # Get number of elements in dimensions after the first
     nvalues = 1
