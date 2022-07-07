@@ -146,7 +146,7 @@ def repartition(arr, ndesired, comm=None):
     send_displ = np.cumsum(send_count) - send_count
     recv_count = np.ndarray(comm_size, dtype=index_dtype)
     comm.Alltoall(send_count, recv_count)
-    recv_displ = cumsum(recv_count) - recv_count
+    recv_displ = np.cumsum(recv_count) - recv_count
 
     shape = list(arr.shape)
     shape[0] = sum(recv_count)
@@ -889,8 +889,7 @@ def test_parallel_sort_random_integers():
         arr_sorted = arr
         delta = arr_sorted[1:] - arr_sorted[:-1]
         if any(delta<0.0):
-            print("Local values are not sorted correctly!")
-            comm.Abort()
+            raise RuntimeError("FAILED: Local values are not sorted correctly!")
 
         # Check ordering between processors
         if n > 0:
@@ -908,15 +907,12 @@ def test_parallel_sort_random_integers():
             all_max = all_max[ind]
             for rank in range(1, np.sum(ind)):
                 if all_min[rank] < all_max[rank-1]:
-                    print("Values are not sorted correctly between processors!")
-                    comm.Abort()
+                    raise RuntimeError("FAILED: Values are not sorted correctly between processors!")
 
         # Check that we can reconstruct the array using the index
         arr_from_index = fetch_elements(orig, index)
         if np.any(arr_from_index != arr):
-            print("Index doesn't work!")
-            print(comm_rank,"-", orig, arr, arr_from_index, index)
-            comm.Abort()
+            raise RuntimeError("FAILED: Index doesn't work!")
 
     comm.Barrier()
     if comm_rank == 0:
@@ -936,7 +932,7 @@ def test_parallel_sort_random_unyt_floats():
     max_value = 1.0e6
 
     if comm_rank == 0:
-        print(f"Test sorting {nr_tests} random unyt arrays")
+        print(f"Test sorting {nr_tests} random unyt arrays and applying sort index")
 
     try:
         import unyt
@@ -981,81 +977,22 @@ def test_parallel_sort_random_unyt_floats():
             all_max = all_max[ind]
             for rank in range(1, np.sum(ind)):
                 if all_min[rank] < all_max[rank-1]:
-                    print("Values are not sorted correctly between processors!")
-                    comm.Abort()
+                    raise RuntimeError("FAILED: Values are not sorted correctly between processors!")
 
         # Check that we can reconstruct the array using the index
         arr_from_index = fetch_elements(orig, index)
         if np.any(arr_from_index != arr):
-            print("Index doesn't work!")
-            print(comm_rank,"-", orig, arr, arr_from_index, index)
-            comm.Abort()
+            raise RuntimeError("FAILED: Index doesn't work!")
+
+        # Check we preserved the units
+        if arr_from_index.units != arr.units:
+            raise RuntimeError("FAILED: fetch_elements did not preserve units!")            
 
     comm.Barrier()
     if comm_rank == 0:
         print(f"  OK")
 
   
-def test_large_sort():
-    """Try sorting lots of elements!"""
-
-    nmax = int(sys.argv[1])
-
-    from mpi4py import MPI
-    comm = MPI.COMM_WORLD
-    comm_rank = comm.Get_rank()
-    comm_size = comm.Get_size()
-
-    # Test parallel sort routine - first generate test dataset
-    np.random.seed(35915)
-    n   = int((np.random.rand() + 0.1) * nmax)
-    arr = np.random.rand(n)
-    ntot1 = comm.allreduce(arr.shape[0])
-
-    if comm_rank == 0:
-        print("Total elements = ", ntot1)
-
-    # Sort the array
-    comm.Barrier()
-    t0 = time.time()
-    index = parallel_sort(arr, return_index=True, verbose=True)
-    comm.Barrier()
-    t1 = time.time()
-    if comm_rank==0:
-        print("Elapsed time (s) = ", t1-t0)
-
-    # Verify order locally
-    arr_sorted = arr
-    delta = arr_sorted[1:] - arr_sorted[:-1]
-    if np.any(delta<0.0):
-        print("Local values are not sorted correctly!")
-        comm.Abort()
-
-    # Check ordering between processors
-    if n > 0:
-        local_min = np.amin(arr_sorted)
-        local_max = np.amax(arr_sorted)
-    else:
-        local_min = 0
-        local_max = 0
-    all_min = np.asarray(comm.allgather(local_min))
-    all_max = np.asarray(comm.allgather(local_max))
-    all_n   = np.asarray(comm.allgather(n))
-    ind = (all_n > 0)
-    if np.sum(ind) > 1:
-        all_min = all_min[ind]
-        all_max = all_max[ind]
-        for rank in range(1, np.sum(ind)):
-            if all_min[rank] < all_max[rank-1]:
-                print("Values are not sorted correctly between processors!")
-                comm.Abort()
-
-    # If we get here, output array is sorted
-    comm.Barrier()
-    if comm_rank == 0:
-        print("Array is sorted correctly")
-
-
 def test_repartition():
 
     from mpi4py import MPI
@@ -1063,21 +1000,18 @@ def test_repartition():
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
 
-    for i in range(10):
+    nr_tests = 200
+    max_local_size = 1000
+    max_value = 20
 
-        if comm_rank == 0:
-            print("Test ", i)
+    if comm_rank == 0:
+        print(f"Test repartitioning {nr_tests} random integer arrays")
+
+    for i in range(nr_tests):
 
         # Make random test aray
-        n   = np.random.randint(5) + 0
-        arr = np.random.randint(10, size=n)    
-
-        # Write out input
-        for rank in range(comm_size):
-            if comm_rank == rank:
-                print(comm_rank," - input:",arr)
-                sys.stdout.flush()
-            comm.Barrier()        
+        n   = np.random.randint(max_local_size) + 0
+        arr = np.random.randint(max_value, size=n)    
 
         # Pick random destination for each element
         dest   = np.random.randint(comm_size, size=n)
@@ -1088,19 +1022,19 @@ def test_repartition():
             nlocal = np.sum(dest==rank)
             ndesired[rank] = comm.allreduce(nlocal)
 
-        print(comm_rank, "- Ndesired = ", ndesired)
-        sys.stdout.flush()
-        comm.Barrier()
-
         # Repartition
         new_arr = repartition(arr, ndesired)
 
-        # Write out output
-        for rank in range(comm_size):
-            if comm_rank == rank:
-                print(comm_rank," - output:",new_arr)
-                sys.stdout.flush()
-            comm.Barrier()
+        # Verify result by gathering on rank 0
+        arr_gathered = np.concatenate(comm.allgather(arr))
+        new_arr_gathered = np.concatenate(comm.allgather(new_arr))
+        if comm_rank == 0:
+            if np.any(arr_gathered != new_arr_gathered):
+                raise RuntimeError("FAILED: Partitioned array is incorrect!")
+
+    comm.Barrier()
+    if comm_rank == 0:
+        print(f"  OK")
 
 
 def test_unique():
@@ -1110,49 +1044,58 @@ def test_unique():
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
 
-    np.random.seed(comm_rank)
-
-    nr_tests = 1000
+    nr_tests = 200
     max_size = 1000
     max_value = 50
 
-    for test_nr in range(nr_tests):
+    if comm_rank == 0:
+        print(f"Test finding unique values in {nr_tests} random integer arrays")
 
+    for test_nr in range(nr_tests):
 
         # Create test dataset
         nr_local_elements = np.random.randint(max_size)
         nr_total_elements = comm.allreduce(nr_local_elements)
         local_data = np.random.randint(max_value, size=nr_local_elements)
-        if comm_rank == 0:
-            print(f"Test {test_nr} with {nr_total_elements} elements")
 
         # Find unique values
         local_unique, local_counts = parallel_unique(local_data, comm=comm, return_counts=True,
                                                      repartition_output=True)
-        print(comm_rank, local_unique)
 
         # Combine values and counts on first rank
         global_data = comm.gather(local_data)
         global_unique = comm.gather(local_unique)
+        global_counts = comm.gather(local_counts)
         if comm_rank == 0:
-            global_data = concatenate(global_data)
-            global_unique = concatenate(global_unique)
-            check_unique = unique(global_data)
+            global_data = np.concatenate(global_data)
+            global_unique = np.concatenate(global_unique)
+            global_counts = np.concatenate(global_counts)
+            check_unique, check_counts = np.unique(global_data, return_counts=True)
             if np.any(global_unique != check_unique):
                 print(global_unique, check_unique)
                 raise RuntimeError("FAILED: Unique values do not match!")
-            else:
-                print("  - OK")
+            if np.any(global_counts != check_counts):
+                print(global_counts, check_counts)
+                raise RuntimeError("FAILED: Count values do not match!")
 
     comm.Barrier()
     if comm_rank == 0:
-        print("Done.")
+        print("  OK")
 
 
 def test():
-    test_parallel_sort_random_integers()
-    test_parallel_sort_random_unyt_floats()
-    
+
+    np.random.seed(comm_rank)
+    try:
+        test_parallel_sort_random_integers()
+        test_parallel_sort_random_unyt_floats()
+        test_repartition()
+        test_unique()
+    except RuntimeError as e:
+        print(e)
+        print("A test failed!")
+        comm.Abort()
+
 
 if __name__ == "__main__":
 
