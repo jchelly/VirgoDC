@@ -527,7 +527,7 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
                     # processor
                     last_to_send = arr.shape[0] - 1
                 else:
-                    if arr[val_first_index_arr[rank+1]] > val[rank+1]:
+                    if arr[val_first_index_arr[rank+1]] != val[rank+1]:
                         # All remaining instances of this value go to later
                         # processors
                         last_to_send = val_first_index - 1
@@ -1135,7 +1135,7 @@ def test():
         test_parallel_sort_all_empty()
         test_parallel_sort_some_empty()
         test_parallel_sort_unyt_floats()
-        #test_parallel_sort_structured_arrays() # Not implemented yet
+        test_parallel_sort_structured_arrays()
         test_repartition_random_integers()
         test_repartition_structured_array()
         test_unique()
