@@ -504,9 +504,8 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
         # Find array indexes of splitting point values
         # It's much faster to do this in one pass here than to do
         # each one separately inside the loop below.
-        ranks = np.arange(mycomm_size, dtype=np.int32)
-        val_first_index_arr = np.searchsorted(arr, val[ranks], side='left')
-        val_last_index_arr  = np.searchsorted(arr, val[ranks], side='right') - 1
+        val_first_index_arr = np.searchsorted(arr, val, side='left')
+        val_last_index_arr  = np.searchsorted(arr, val, side='right') - 1
 
         # Loop over destination processors
         for rank in range(mycomm_size):
@@ -528,7 +527,7 @@ def parallel_sort(arr, comm=None, return_index=False, verbose=False):
                     # processor
                     last_to_send = arr.shape[0] - 1
                 else:
-                    if arr[val_first_index] > val[rank+1]:
+                    if arr[val_first_index_arr[rank+1]] > val[rank+1]:
                         # All remaining instances of this value go to later
                         # processors
                         last_to_send = val_first_index - 1
@@ -859,66 +858,78 @@ def parallel_unique(arr, comm=None, arr_sorted=False, return_counts=False,
     else:
         return local_unique
 
-    
-def test_parallel_sort_random_integers():
-    """Test sorting code on random arrays of integers"""
+
+def gather_to_first_rank(arr, comm):
+    """Gather the specified array on rank 0"""
+    arr_g = comm.gather(arr)
+    if comm.Get_rank() == 0:
+        return np.concatenate(arr_g)
+    else:
+        return None
+
+
+def test_parallel_sort(input_function, nr_tests, message):
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
 
-    nr_tests = 200
-    max_local_size = 1000
-    max_value = 10
-
     if comm_rank == 0:
-        print(f"Test sorting {nr_tests} random arrays of integers")
+        print(f"Test sorting {nr_tests} {message}")
 
     for i in range(nr_tests):
 
-        # Make random test aray
-        n   = np.random.randint(max_local_size) + 0
-        arr = np.random.randint(max_value, size=n)
+        # Make the test array
+        arr = input_function()
 
-        # Keep a copy of the original
-        orig = arr.copy()
+        # Parallel sort then gather result on rank 0
+        arr_ps = arr.copy()
+        index = parallel_sort(arr_ps, return_index=True)
+        arr_ps_g = gather_to_first_rank(arr_ps, comm)
 
-        # Sort
-        index = parallel_sort(arr, return_index=True)
+        # Gather on rank 0 then serial sort
+        arr_g = gather_to_first_rank(arr, comm)
+        if comm_rank == 0:
+            arr_g_ss = np.sort(arr_g)
 
-        # Verify order locally
-        arr_sorted = arr
-        delta = arr_sorted[1:] - arr_sorted[:-1]
-        if any(delta<0.0):
-            raise RuntimeError("FAILED: Local values are not sorted correctly!")
+        # Compare
+        if comm_rank == 0:
+            if np.any(arr_ps_g != arr_g_ss):
+                raise RuntimeError("FAILED: array was not sorted correctly!")
 
-        # Check ordering between processors
-        if n > 0:
-            local_min = np.amin(arr_sorted)
-            local_max = np.amax(arr_sorted)
-        else:
-            local_min = 0
-            local_max = 0
-        all_min = np.asanyarray(comm.allgather(local_min))
-        all_max = np.asanyarray(comm.allgather(local_max))
-        all_n   = np.asanyarray(comm.allgather(n))
-        ind = (all_n > 0)
-        if np.sum(ind) > 1:
-            all_min = all_min[ind]
-            all_max = all_max[ind]
-            for rank in range(1, np.sum(ind)):
-                if all_min[rank] < all_max[rank-1]:
-                    raise RuntimeError("FAILED: Values are not sorted correctly between processors!")
-
-        # Check that we can reconstruct the array using the index
-        arr_from_index = fetch_elements(orig, index)
-        if np.any(arr_from_index != arr):
+        # Check that we can reconstruct the sorted array using the index
+        arr_ps_from_index = fetch_elements(arr, index)
+        if np.any(arr_ps_from_index != arr_ps):
             raise RuntimeError("FAILED: Index doesn't work!")
 
     comm.Barrier()
     if comm_rank == 0:
         print(f"  OK")
+
+
+def test_parallel_sort_random_integers():
+
+    def input_function():
+        max_local_size = 10000
+        max_value = 10
+        n   = np.random.randint(max_local_size) + 0
+        arr = np.random.randint(max_value, size=n)
+        return arr
+
+    test_parallel_sort(input_function, 200, "random arrays of integers")
+
+
+def test_parallel_sort_random_floats():
+
+    def input_function():
+        max_local_size = 10000
+        max_value = 1.0e10
+        n   = np.random.randint(max_local_size) + 0
+        arr = np.random.uniform(low=-max_value, high=max_value, size=n)
+        return arr
+
+    test_parallel_sort(input_function, 200, "random arrays of floats")
 
 
 def test_parallel_sort_random_unyt_floats():
@@ -934,7 +945,7 @@ def test_parallel_sort_random_unyt_floats():
     max_value = 1.0e6
 
     if comm_rank == 0:
-        print(f"Test sorting {nr_tests} random unyt arrays and applying sort index")
+        print(f"Test sorting {nr_tests} random unyt arrays")
 
     try:
         import unyt
@@ -989,6 +1000,56 @@ def test_parallel_sort_random_unyt_floats():
         # Check we preserved the units
         if arr_from_index.units != arr.units:
             raise RuntimeError("FAILED: fetch_elements did not preserve units!")            
+
+    comm.Barrier()
+    if comm_rank == 0:
+        print(f"  OK")
+
+
+def test_parallel_sort_structured_arrays():
+    """Test sorting code on structured arrays"""
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+
+    nr_tests = 200
+    max_local_size = 1000
+    max_value = 10
+
+    if comm_rank == 0:
+        print(f"Test sorting {nr_tests} random structured arrays of integers")
+
+    dtype = ([("a", int), ("b", int)])
+
+    for i in range(nr_tests):
+
+        # Make random test aray
+        n   = np.random.randint(max_local_size) + 0
+        arr = np.ndarray(n, dtype=dtype)
+        arr["a"] = np.random.randint(max_value, size=n)
+        arr["b"] = np.random.randint(max_value, size=n)
+
+        # Keep a copy of the original
+        orig = arr.copy()
+
+        # Sort
+        index = parallel_sort(arr, return_index=True)
+
+        # Check that we can reconstruct the array using the index
+        arr_from_index = fetch_elements(orig, index)
+        if np.any(arr_from_index != arr):
+            raise RuntimeError("FAILED: Index doesn't work!")
+
+        # Gather the sorted array on rank 0 to check ordering
+        orig_full = comm.gather(orig)
+        arr_full = comm.gather(arr)
+        if comm_rank == 0:
+            orig_full = np.concatenate(orig_full)
+            arr_full = np.concatenate(arr_full)
+            if np.any(orig_full!=arr_full):
+                raise RuntimeError("Sorted array is incorrect!")
 
     comm.Barrier()
     if comm_rank == 0:
@@ -1138,7 +1199,9 @@ def test():
     np.random.seed(comm_rank)
     try:
         test_parallel_sort_random_integers()
+        test_parallel_sort_random_floats()
         test_parallel_sort_random_unyt_floats()
+        #test_parallel_sort_structured_arrays()
         test_repartition_random_integers()
         test_repartition_structured_array()
         test_unique()
