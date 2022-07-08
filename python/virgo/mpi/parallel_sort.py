@@ -1127,7 +1127,15 @@ def test_unique():
 
 
 def test():
+    """
+    Run tests. E.g.
 
+    mpirun -np 8 python3 -m mpi4py -c "import virgo.mpi.parallel_sort as ps ; ps.test()"
+    """
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
     np.random.seed(comm_rank)
     try:
         test_parallel_sort_random_integers()
@@ -1143,6 +1151,69 @@ def test():
         print(e)
         print("A test failed!")
         comm.Abort()
+
+
+def large_parallel_sort_test(elements_per_rank):
+    """
+    Test parallel_sort() on larger input arrays.
+
+    This sorts an array of small(ish) integers and checks that
+    the number of instances of each value is preserved and
+    that the result is in order.
+
+    The array is never gathered one one rank so larger test
+    cases can be run. E.g.
+
+    mpirun -np 16 python3 -m mpi4py -c "import virgo.mpi.parallel_sort as ps ; ps.large_parallel_sort_test(10000000)"
+    """
+    
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+
+    # Create input arrays
+    max_value = 1000000
+    n = np.random.randint(2*elements_per_rank)
+    arr = np.random.randint(max_value, size=n)
+    ntot = comm.allreduce(n)
+    if comm_rank == 0:
+        print(f"Sorting {ntot} elements on {comm_size} MPI ranks")
+
+    # Count number of instances of each value
+    num_val_start = np.bincount(arr, minlength=max_value)
+    num_val_start = comm.allreduce(num_val_start)
+
+    # Sort the array
+    parallel_sort(arr, comm=comm)
+
+    # Count number of instances of each value
+    num_val_end = np.bincount(arr, minlength=max_value)
+    num_val_end = comm.allreduce(num_val_end)
+    
+    # Check local ordering
+    if np.any(arr[1:]<arr[:-1]):
+        raise RuntimeError("Array is not sorted correctly withing a rank!")
+    elif comm_rank == 0:
+        print("  Local ordering is ok")
+
+    # Check ordering between ranks
+    if comm_size > 0:
+        rank_min_val = np.asarray(comm.allgather(np.amin(arr)))
+        rank_max_val = np.asarray(comm.allgather(np.amax(arr)))
+        if np.any(rank_min_val[1:] < rank_max_val[:-1]):
+            raise RuntimeError("Array is not sorted correctly between ranks!")
+        elif comm_rank == 0:
+            print("  Ordering between ranks is ok")
+
+    # Check number of instances of each value has been preserved
+    if np.any(num_val_start != num_val_end):
+        raise RuntimeError("Sorted array is not a reordered copy of the input!")
+    elif comm_rank == 0:
+        print("  Number of instances of each value has been preserved")
+
+    if comm_rank == 0:
+        print("Done.")
 
 
 if __name__ == "__main__":
