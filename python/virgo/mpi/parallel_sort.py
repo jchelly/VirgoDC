@@ -932,128 +932,60 @@ def test_parallel_sort_random_floats():
     test_parallel_sort(input_function, 200, "random arrays of floats")
 
 
-def test_parallel_sort_random_unyt_floats():
-    """Test sorting code on random arrays of floats with units"""
+def test_parallel_sort_all_empty():
 
-    from mpi4py import MPI
-    comm = MPI.COMM_WORLD
-    comm_rank = comm.Get_rank()
-    comm_size = comm.Get_size()
+    def input_function():
+        return np.zeros(0, dtype=float)
+    test_parallel_sort(input_function, 1, "empty arrays")
 
-    nr_tests = 200
-    max_local_size = 1000
-    max_value = 1.0e6
 
-    if comm_rank == 0:
-        print(f"Test sorting {nr_tests} random unyt arrays")
+def test_parallel_sort_some_empty():
+
+    def input_function():
+        max_local_size = 10000
+        max_value = 1.0e10
+        n   = np.random.randint(max_local_size) + 0
+        if np.random.randint(2) == 0:
+            n = 0 # 50% chance for rank to have empty array
+        arr = np.random.uniform(low=-max_value, high=max_value, size=n)
+        return arr
+
+    test_parallel_sort(input_function, 200, "arrays with some empty ranks")
+
+
+def test_parallel_sort_unyt_floats():
 
     try:
         import unyt
     except ImportError:
-        if comm_rank == 0:
-            print("  Skipped (can't import unyt)")
+        from mpi4py import MPI
+        if MPI.COMM_WORLD.Get_rank() == 0:
+            print("Skipping unyt test: failed to import unyt")
         return
 
-    for i in range(nr_tests):
-
-        # Make random test aray
+    def input_function():
+        max_local_size = 10000
+        max_value = 1.0e10
         n   = np.random.randint(max_local_size) + 0
-        arr = np.random.uniform(high=max_value, size=n)
-        arr = unyt.unyt_array(arr, units=unyt.cm)
+        arr = np.random.uniform(low=-max_value, high=max_value, size=n)
+        return unyt.unyt_array(arr, units=unyt.cm)
 
-        # Keep a copy of the original
-        orig = arr.copy()
-
-        # Sort
-        index = parallel_sort(arr, return_index=True)
-
-        # Verify order locally
-        arr_sorted = arr.ndarray_view()
-        delta = arr_sorted[1:] - arr_sorted[:-1]
-        if np.any(delta<0.0):
-            print("Local values are not sorted correctly!")
-            comm.Abort()
-
-        # Check ordering between processors
-        if n > 0:
-            local_min = np.amin(arr_sorted)
-            local_max = np.amax(arr_sorted)
-        else:
-            local_min = 0
-            local_max = 0
-        all_min = np.asanyarray(comm.allgather(local_min))
-        all_max = np.asanyarray(comm.allgather(local_max))
-        all_n   = np.asanyarray(comm.allgather(n))
-        ind = (all_n > 0)
-        if np.sum(ind) > 1:
-            all_min = all_min[ind]
-            all_max = all_max[ind]
-            for rank in range(1, np.sum(ind)):
-                if all_min[rank] < all_max[rank-1]:
-                    raise RuntimeError("FAILED: Values are not sorted correctly between processors!")
-
-        # Check that we can reconstruct the array using the index
-        arr_from_index = fetch_elements(orig, index)
-        if np.any(arr_from_index != arr):
-            raise RuntimeError("FAILED: Index doesn't work!")
-
-        # Check we preserved the units
-        if arr_from_index.units != arr.units:
-            raise RuntimeError("FAILED: fetch_elements did not preserve units!")            
-
-    comm.Barrier()
-    if comm_rank == 0:
-        print(f"  OK")
+    test_parallel_sort(input_function, 200, "random unyt float arrays")
 
 
 def test_parallel_sort_structured_arrays():
-    """Test sorting code on structured arrays"""
 
-    from mpi4py import MPI
-    comm = MPI.COMM_WORLD
-    comm_rank = comm.Get_rank()
-    comm_size = comm.Get_size()
-
-    nr_tests = 200
-    max_local_size = 1000
-    max_value = 10
-
-    if comm_rank == 0:
-        print(f"Test sorting {nr_tests} random structured arrays of integers")
-
-    dtype = ([("a", int), ("b", int)])
-
-    for i in range(nr_tests):
-
-        # Make random test aray
+    def input_function():
+        max_local_size = 10000
+        max_value = 10
+        dtype = ([("a", int), ("b", int)])
         n   = np.random.randint(max_local_size) + 0
         arr = np.ndarray(n, dtype=dtype)
         arr["a"] = np.random.randint(max_value, size=n)
         arr["b"] = np.random.randint(max_value, size=n)
+        return arr
 
-        # Keep a copy of the original
-        orig = arr.copy()
-
-        # Sort
-        index = parallel_sort(arr, return_index=True)
-
-        # Check that we can reconstruct the array using the index
-        arr_from_index = fetch_elements(orig, index)
-        if np.any(arr_from_index != arr):
-            raise RuntimeError("FAILED: Index doesn't work!")
-
-        # Gather the sorted array on rank 0 to check ordering
-        orig_full = comm.gather(orig)
-        arr_full = comm.gather(arr)
-        if comm_rank == 0:
-            orig_full = np.concatenate(orig_full)
-            arr_full = np.concatenate(arr_full)
-            if np.any(orig_full!=arr_full):
-                raise RuntimeError("Sorted array is incorrect!")
-
-    comm.Barrier()
-    if comm_rank == 0:
-        print(f"  OK")
+    test_parallel_sort(input_function, 200, "structured arrays")
 
   
 def test_repartition_random_integers():
@@ -1200,8 +1132,10 @@ def test():
     try:
         test_parallel_sort_random_integers()
         test_parallel_sort_random_floats()
-        test_parallel_sort_random_unyt_floats()
-        #test_parallel_sort_structured_arrays()
+        test_parallel_sort_all_empty()
+        test_parallel_sort_some_empty()
+        test_parallel_sort_unyt_floats()
+        #test_parallel_sort_structured_arrays() # Not implemented yet
         test_repartition_random_integers()
         test_repartition_structured_array()
         test_unique()
