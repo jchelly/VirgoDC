@@ -1157,12 +1157,14 @@ def large_parallel_sort_test(elements_per_rank):
     """
     Test parallel_sort() on larger input arrays.
 
-    This sorts an array of small(ish) integers and checks that
-    the number of instances of each value is preserved and
-    that the result is in order.
+    This sorts an array of small(ish) integers and checks that the number of
+    instances of each value is preserved and that the result is in order.
 
-    The array is never gathered one one rank so larger test
-    cases can be run. E.g.
+    The number of elements on each rank is randomly chosen  between 0 and
+    2*elements_per_rank.
+
+    The array is never gathered one one rank, so larger test cases can be run.
+    E.g.
 
     mpirun -np 16 python3 -m mpi4py -c "import virgo.mpi.parallel_sort as ps ; ps.large_parallel_sort_test(10000000)"
     """
@@ -1185,7 +1187,8 @@ def large_parallel_sort_test(elements_per_rank):
     num_val_start = comm.allreduce(num_val_start)
 
     # Sort the array
-    parallel_sort(arr, comm=comm)
+    arr_unsorted = arr.copy()
+    index = parallel_sort(arr, comm=comm, return_index=True)
 
     # Count number of instances of each value
     num_val_end = np.bincount(arr, minlength=max_value)
@@ -1211,6 +1214,13 @@ def large_parallel_sort_test(elements_per_rank):
         raise RuntimeError("Sorted array is not a reordered copy of the input!")
     elif comm_rank == 0:
         print("  Number of instances of each value has been preserved")
+
+    # Try to reconstruct the sorted array from the index
+    arr_check = fetch_elements(arr_unsorted, index, comm=comm)
+    if np.any(arr_check != arr):
+        raise RuntimeError("Index does not reproduce sorted array!")
+    elif comm_rank == 0:
+        print("  Index reproduces sorted array")
 
     if comm_rank == 0:
         print("Done.")
