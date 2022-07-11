@@ -260,6 +260,8 @@ Note that chunking of large writes is not currently implemented.
 
 #### Multi-file Parallel I/O
 
+##### The MultiFile class
+
 ```
 virgo.mpi.parallel_hdf5.MultiFile.__init__(self, filenames, file_nr_attr=None,
     file_nr_dataset=None, file_idx=None, comm=None)
@@ -292,6 +294,8 @@ The class takes the following parameters:
 Exactly one of `file_nr_attr`, `file_nr_dataset` and `file_idx` must be
 specified.
 
+##### Reading datasets from a file set
+
 ```
 virgo.mpi.parallel_hdf5.MultiFile.read(self, datasets, group=None,
     return_file_nr=None)
@@ -323,6 +327,8 @@ rank if this is called collectively.
 
 Can be used with `MultiFile.write()` to write output distributed between files
 in the same way as an input file set.
+
+##### Writing dataset to a file set
 
 ```
 virgo.mpi.parallel_hdf5.MultiFile.write(self, data, elements_per_file,
