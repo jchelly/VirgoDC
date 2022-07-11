@@ -229,6 +229,40 @@ have approximately equal numbers of elements on each MPI rank.
 
 The input array must be one dimensional.
 
+#### MPI Alltoallv function
+
+```
+virgo.mpi.parallel_sort.my_alltoallv(sendbuf, send_count, send_offset,
+    recvbuf, recv_count, recv_offset,
+    comm=None)
+```
+
+Most of the operations in this module use all-to-all communication patterns.
+This function provides an all-to-all implementation that avoids problems
+with large (>2GB) communications and can handle any numpy type that the mpi4py
+`mpi4py.util.dtlib.from_numpy_dtype()` function can translate into an MPI type.
+
+  * `sendbuf` - numpy array with the data to send
+  * `send_count` - number of elements to go to each MPI rank
+  * `send_offset` - offset of the first element to send to each rank
+  * `recvbuf` - numpy array to receive data into
+  * `recv_count` - number of elements to go to receive from MPI rank
+  * `recv_offset` - offset of the first element to receive from each rank
+  * `comm` - specifes the communicator to use (MPI_COMM_WORLD if not set)
+
+#### Tests
+
+The parallel_sort module includes several tests, which can be run with
+```
+mpirun -np 8 python3 -m mpi4py -c "import virgo.mpi.parallel_sort as ps ; ps.test()"
+```
+These tests rely on gathering all data to rank 0 for verification so their
+size is limited. A larger test of the parallel sort function can be run with
+```
+mpirun -np 16 python3 -m mpi4py -c "import virgo.mpi.parallel_sort as ps ; ps.large_parallel_sort_test(N)"
+```
+where N is the number of elements per rank to sort.
+
 ### MPI I/O Functions
 
 The module virgo.mpi.parallel_hdf5 contains functions for reading and writing
