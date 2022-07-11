@@ -354,3 +354,59 @@ as in the input file set used to initialize the class.
 The get_elements_per_file() method can be used to get the value of
 elements_per_file needed to write output partitioned in the same way as some
 input file set.
+
+### MPI Utility Functions
+
+The module virgo.mpi.util contains several other functions which are helpful
+for dealing with simulation and halo finder output.
+
+#### Computing particle group membership from Subfind lengths and offsets
+
+```
+virgo.mpi.util.group_index_from_length_and_offset(length, offset,
+    nr_local_ids, comm=None)
+```
+
+Given distributed arrays with the lengths and offsets of particles in a subfind
+output, this computes the group index for each particle. The first group is
+assigned index zero.
+  * `length` - distributed array with the number of particles in each group
+  * `offset` - distributed array with the offset to the first particle in each
+    group
+  * `nr_local_ids` - size of the particle IDs array on this MPI rank. Used to
+    determine the size of the output group membership array
+  * `comm` - communicator to use. Will use MPI_COMM_WORLD if not specified.
+
+On one MPI rank this would be equivalent to:
+```
+grnr = np.ones(nr_local_ids, dtype=int)
+for i, (l, o) in enumerate(zip(length, offset)):
+  grnr[o:o+l] = i
+return grnr
+```
+
+This can be used in combination with virgo.mpi.parallel_sort.parallel_match()
+to find subfind group membership for particles in a simulation snapshot.
+
+#### Allocating zero-sized arrays on ranks with no data
+
+Gadget snapshots typically omit HDF5 datasets which would have zero size (e.g.
+if some files in a snapshot happen to have zero star particles). This can be an
+issue in parallel programs because MPI ranks which read files with such missing
+datasets don't know the type or dimensions of some of the datasets.
+
+```
+virgo.mpi.util.replace_none_with_zero_size(arr, comm=None)
+```
+This takes an input distributed array, `arr`, and on ranks where arr is None
+an empty array is returned using type and size information from the other MPI
+ranks. The new array will have zero size in the first dimension and the same
+size as the other MPI ranks in all other dimensions.
+
+On ranks where the input is not None, the input array is returned.
+
+The array should have the same dtype on all ranks where it is not None.
+
+The intended use of this function is to allow read routines to return None
+where datasets do not exist and then this function can be used to retrieve the
+missing metadata.
