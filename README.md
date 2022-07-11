@@ -74,7 +74,7 @@ pip install . --user
     * the BinaryFile class, which allows for reading binary files using a HDF5-like interface
     * an efficient method for finding matching values in arrays of particle IDs
     * a vectorized python implementation of the peano_hilbert_key function from Gadget
-  * virgo.mpi: utilities for working with simulation data using mpi4py, including a reasonably efficient MPI parallel sort
+  * virgo.mpi: utilities for working with simulation data using mpi4py, including a reasonably efficient MPI parallel sort and functions for parallel I/O on multi-file simulation output
 
 
 ### Reading simulation data
@@ -125,4 +125,224 @@ See the docstrings associated with each class to determine which parameters are 
 In most cases calling the sanity_check() method on the object will raise an exception if any parameters
 were set incorrectly.
 
+### MPI Parallel Sorting and Matching Functions
 
+Working with halo finder output often requires matching particle IDs between
+the halo finder output files and simulation snapshots.
+
+The module virgo.mpi.parallel_sort contains functions for sorting, matching
+and finding unique values in distributed arrays. A distributed array is simply
+a numpy array which exists on each MPI rank and is treated as forming part of
+a single, large array. Elements in distributed arrays have a notional 'global'
+index which, for an array with N elements over all ranks, runs from zero for
+the first element on rank zero to N-1 for the last element on the last MPI
+rank.
+
+All of these functions are collective and must be executed an all MPI ranks in
+the specified communicator `comm`, or `MPI_COMM_WORLD` if the `comm` parameter
+is not supplied.
+
+#### Repartitioning a distributed array
+
+```
+virgo.mpi.parallel_sort.repartition(arr, ndesired, comm=None)
+```
+This function returns a copy of the input distributed array `arr` with the
+number of elements per MPI rank specified in ndesired, which must be an integer
+array with one element per MPI rank.
+
+This can be used to improve memory load balancing if the input array is
+unevenly distrubuted. `comm` specifies the MPI communicator to use.
+MPI_COMM_WORLD is used if comm is not set.
+
+If `arr` is multidimensional then the repartitioning is done along the first
+axis.
+
+#### Fetching specified elements of a distributed array
+
+```
+virgo.mpi.parallel_sort.fetch_elements(arr, index, result=None, comm=None)
+```
+This function returns a new distributed array containing the elements of `arr`
+with global indexes specified by `index`. The output can be placed in an
+existing array using the `result` parameter.
+
+This function can be used to apply the sorting index returned by
+parallel_sort().
+
+If `arr` is multidimensional then the index is taken to refer to the first
+axis and the function returns arr[index,...].
+
+#### Sorting
+
+```
+virgo.mpi.parallel_sort.parallel_sort(arr, comm=None, return_index=False, verbose=False)
+```
+This function sorts the supplied array `arr` in place. If `return_index` is
+true then it also returns a new distributed array with the global indexes
+in the input array of the returned values.
+
+When `return_index` is used this is essentially an MPI parallel version of
+np.argsort but with the side effect of sorting the array in place. The index
+can be supplied to fetch_elements() to put other arrays into the same order
+as the sorted array.
+
+Only one dimensional arrays can be sorted.
+
+#### Finding matching values between two arrays
+
+```
+virgo.mpi.parallel_sort.parallel_match(arr1, arr2, arr2_sorted=False, comm=None)
+```
+For each value in the input distributed array `arr1` this function returns the
+global index of an element with the same value in distributed array `arr2`, or
+-1 where no match is found.
+
+If `arr2_sorted` is True then the input `arr2` is assumed to be sorted, which
+saves some time. Incorrect results will be generated if `arr2_sorted` is true
+but `arr2` is not really sorted.
+
+Both input arrays must be one dimensional.
+
+#### Finding unique values
+
+```
+virgo.mpi.parallel_sort.parallel_unique(arr, comm=None, arr_sorted=False,
+    return_counts=False, repartition_output=False)
+```
+
+This function returns a new distributed array which contains the unique values
+from the input distributed array arr. If `arr_sorted` is True the input is
+assumed to already be sorted, which saves some time.
+
+If `return_counts` is true then it also returns a distributed array with the
+number of instances of each unique value which were found.
+
+If `repartition_output` is true then the output arrays are repartitioned to
+have approximately equal numbers of elements on each MPI rank.
+
+The input array must be one dimensional.
+
+### MPI I/O Functions
+
+The module virgo.mpi.parallel_hdf5 contains functions for reading and writing
+distributed arrays stored in sets of HDF5 files, using MPI collective I/O
+where possible. These can be useful for reading simulation snapshots and halo
+finder output.
+
+#### Collective HDF5 Read
+
+```
+virgo.mpi.parallel_hdf5.collective_read(dataset, comm)
+```
+This function carries out a collective read of the dataset `dataset`, which
+should be a h5py.Dataset object in a file opened with the 'mpio' driver. It
+returns a new distributed array with the data.
+
+Multidimensional arrays are partitioned between MPI ranks along the first
+axis.
+
+Reads are chunked if necessary to avoid problems with the underlying MPI
+library failing to handle reads of >2GB.
+
+#### Collective HDF5 Write
+
+```
+virgo.mpi.parallel_hdf5.collective_write(group, name, data, comm)
+```
+This function writes the distributed array `data` to the h5py.Group specified
+ by the `group` parameter with name `name`.
+
+Multidimensional arrays are assumed to be distributed between MPI ranks along
+the first axis.
+
+Note that chunking of large writes is not currently implemented.
+
+#### Multi-file Parallel I/O
+
+```
+virgo.mpi.parallel_hdf5.MultiFile.__init__(self, filenames, file_nr_attr=None,
+    file_nr_dataset=None, file_idx=None, comm=None)
+```
+
+Simulation codes can often split their output over a variable number of files.
+There may be a single large output file, many small files, or something in
+between. This class is intended to solve the general problem of carrying out
+parallel reads of distributed arrays from N files on M MPI ranks for arbitrary
+values of N and M.
+
+The approach is as follows:
+
+  * For N >= M (i.e. at least one file per MPI rank) each MPI rank uses serial
+    I/O to read a subset of the files
+  * For N < M (i.e. more MPI ranks than files) the MPI ranks are split into
+    groups and each group does collective I/O on one file
+
+The class takes the following parameters:
+  * `filenames` - a format string to generate the names of files in the set.
+    The file number is substituted in as `filenames % {"file_nr" : file_nr}`
+  * `file_nr_attr` - a tuple with (HDF5 object name, attribute name) which
+    specifies a HDF5 attribute containing the number of files in the set.
+    E.g. in a Gadget snapshot use
+    `file_nr_attr=("Header","NumFilesPerSnapshot")`.
+  * `file_nr_dataset` - the name of a dataset with the number of files in the
+     set
+  * `file_idx` - an array with the indexes of the files in the set
+
+Exactly one of `file_nr_attr`, `file_nr_dataset` and `file_idx` must be
+specified.
+
+```
+virgo.mpi.parallel_hdf5.MultiFile.read(self, datasets, group=None,
+    return_file_nr=None)
+```
+This method reads multiple distributed arrays from the file set. The arrays
+are distributed between MPI ranks along the first axis. The parameters are:
+  * `datasets` - a list of the names of the datasets to read
+  * `group` - the name of the HDF5 group to read datasets from
+  * `return_file_nr` - if this is true the output dict contains an extra
+    array with the index of the file each element was read from.
+
+Returns a dict containing distributed arrays with one element for each
+name in `datasets`. Input datasets should all have the same number of elements
+per file.
+
+This can be used to read particles from a snapshot distributed over an
+arbitrary number of files, for example.
+
+```
+virgo.mpi.parallel_hdf5.MultiFile.get_elements_per_file(self, name, group=None)
+```
+This returns the number of elements in each file for the specified dataset
+  * `name` - name of the dataset
+  * `group` - name of the group containing the dataset
+
+Returns the number of elements per file along the first axis. Note that this
+is NOT a distributed array - a copy of the full array is returned on each MPI
+rank if this is called collectively.
+
+Can be used with `MultiFile.write()` to write output distributed between files
+in the same way as an input file set.
+
+```
+virgo.mpi.parallel_hdf5.MultiFile.write(self, data, elements_per_file,
+    filenames, mode, group=None, attrs=None)
+```
+This writes the supplied distributed arrays to a set of output files with the
+specified number of elements per file. The number of output files is the same
+as in the input file set used to initialize the class.
+
+  * `data` - a dict containing the distributed arrays to write out. The dict
+    keys are used as output dataset names
+  * `elements_per_file` - the number of elements along the first axis to write
+    to each output file
+  * `filenames` - a format string to generate the names of files in the set.
+    The file number is substituted in as `filenames % {"file_nr" : file_nr}`
+  * `mode` - should be 'r+' to write to existing files or 'w' to create new files
+  * `group` - the name of the HDF5 group to write the datasets to
+  * `attrs` - a dict containing attributes to add to the datasets, of the form
+    `attrs[dataset_name] = (attribute_name, attribute_value)`
+
+The get_elements_per_file() method can be used to get the value of
+elements_per_file needed to write output partitioned in the same way as some
+input file set.
