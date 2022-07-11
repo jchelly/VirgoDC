@@ -314,6 +314,8 @@ per file.
 This can be used to read particles from a snapshot distributed over an
 arbitrary number of files, for example.
 
+##### Reading the number of dataset elements per file
+
 ```
 virgo.mpi.parallel_hdf5.MultiFile.get_elements_per_file(self, name, group=None)
 ```
@@ -328,7 +330,7 @@ rank if this is called collectively.
 Can be used with `MultiFile.write()` to write output distributed between files
 in the same way as an input file set.
 
-##### Writing dataset to a file set
+##### Writing datasets to a file set
 
 ```
 virgo.mpi.parallel_hdf5.MultiFile.write(self, data, elements_per_file,
