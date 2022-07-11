@@ -189,6 +189,12 @@ as the sorted array.
 
 Only one dimensional arrays can be sorted.
 
+This is an attempt to implement the sorting algorithm described in
+https://math.mit.edu/~edelman/publications/scalable_parallel.pdf in python,
+although there are some differences. For example, the final merging of sorted
+array sections is done using a full sort due to the lack of an optimized merge
+function in numpy.
+
 #### Finding matching values between two arrays
 
 ```
