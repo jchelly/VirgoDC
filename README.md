@@ -58,6 +58,11 @@ export HDF5_DIR=${HDF5_HOME}
 pip install --no-binary h5py h5py
 ```
 
+Running the tests requires pytest-mpi:
+```
+pip install pytest-mpi
+```
+
 #### Installing the module
 
 To install the module in your home directory:
@@ -164,14 +169,16 @@ axis.
 virgo.mpi.parallel_sort.fetch_elements(arr, index, result=None, comm=None)
 ```
 This function returns a new distributed array containing the elements of `arr`
-with global indexes specified by `index`. The output can be placed in an
-existing array using the `result` parameter.
+with global indexes specified by `index`. On one MPI rank the result would just
+be `arr[index]`. The output can be placed in an existing array using the
+`result` parameter.
 
 This function can be used to apply the sorting index returned by
 parallel_sort().
 
 If `arr` is multidimensional then the index is taken to refer to the first
-axis and the function returns arr[index,...].
+axis. I.e. if running with only one MPI rank the function would return
+`arr[index,...]`.
 
 #### Sorting
 
@@ -253,15 +260,20 @@ with large (>2GB) communications and can handle any numpy type that the mpi4py
 #### Tests
 
 The parallel_sort module includes several tests, which can be run with
+pytest-mpi:
+
 ```
-mpirun -np 8 python3 -m mpi4py -c "import virgo.mpi.parallel_sort as ps ; ps.test()"
+cd VirgoDC/python
+mpirun -np 8 python3 -m pytest --with-mpi
 ```
-These tests rely on gathering all data to rank 0 for verification so their
-size is limited. A larger test of the parallel sort function can be run with
+
+A larger parallel sort test can be run with
 ```
-mpirun -np 16 python3 -m mpi4py -c "import virgo.mpi.parallel_sort as ps ; ps.large_parallel_sort_test(N)"
+mpirun -np 16 python3 -m mpi4py -c "import virgo.mpi.test_parallel_sort as tps ; tps.run_large_parallel_sort(N)"
 ```
-where N is the number of elements per rank to sort.
+where N is the number of elements per rank to sort. This sorts an array of
+random integers and checks that the result is in order and contains the same
+number of instances of each value as the input.
 
 ### MPI I/O Functions
 

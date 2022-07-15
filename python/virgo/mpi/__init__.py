@@ -3,4 +3,5 @@ __all__ = [
     "parallel_sort",
     "gather_array",
     "util",
-    "parallel_hdf5",]
+    "parallel_hdf5",
+    "test_parallel_sort"]
