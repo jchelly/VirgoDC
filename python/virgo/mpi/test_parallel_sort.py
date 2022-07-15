@@ -110,7 +110,11 @@ def test_parallel_sort_some_empty():
 @pytest.mark.mpi
 def test_parallel_sort_unyt_floats():
 
-    import unyt
+    try:
+        import unyt
+    except ImportError:
+        pytest.skip("Unable to import unyt")
+
     def input_function():
         max_local_size = 10000
         max_value = 1.0e10
