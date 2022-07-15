@@ -281,7 +281,7 @@ def test_multi_file_more_files_than_ranks(tmp_path):
     comm_size = comm.Get_size()
 
     for n in (0, 1, 10, 100, 1000, 10000):
-        do_multi_file_test(tmp_path, basename="more_files", nr_files=comm_size+1, elements_per_file=1000)
+        do_multi_file_test(tmp_path, basename="more_files", nr_files=comm_size+1, elements_per_file=n)
 
 @pytest.mark.mpi
 def test_multi_file_more_ranks_than_files(tmp_path):
@@ -295,7 +295,7 @@ def test_multi_file_more_ranks_than_files(tmp_path):
         pytest.skip("Need >1 MPI rank for this test")
 
     for n in (0, 1, 10, 100, 1000, 10000):
-        do_multi_file_test(tmp_path, basename="more_ranks", nr_files=nr_files, elements_per_file=1000)
+        do_multi_file_test(tmp_path, basename="more_ranks", nr_files=nr_files, elements_per_file=n)
 
 @pytest.mark.mpi
 def test_multi_file_one_file_per_rank(tmp_path):
@@ -305,4 +305,4 @@ def test_multi_file_one_file_per_rank(tmp_path):
     comm_size = comm.Get_size()
 
     for n in (0, 1, 10, 100, 1000, 10000):
-        do_multi_file_test(tmp_path, basename="file_per_rank", nr_files=comm_size, elements_per_file=1000)
+        do_multi_file_test(tmp_path, basename="file_per_rank", nr_files=comm_size, elements_per_file=n)
