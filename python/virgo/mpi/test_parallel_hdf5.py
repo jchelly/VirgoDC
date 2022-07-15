@@ -16,14 +16,23 @@ def do_collective_read(tmp_path, max_local_size, chunk_size=None):
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
 
+    # If max_local_size is an int, make it a single element tuple
+    try:
+        max_local_size = tuple([int(i) for i in max_local_size])
+    except TypeError:
+        max_local_size = (int(max_local_size),)
+
     # Where to write the test file
     filepath = tmp_path / f"collective_read_test_{max_local_size}.hdf5"
     filepath = comm.bcast(filepath)
 
     # Generate test data on rank zero
     if comm_rank == 0:
-        n   = np.random.randint(max_local_size*comm_size)
-        arr = np.random.uniform(low=-1.0e6, high=1.0e6, size=n)
+        if max_local_size[0] > 0:
+            n = np.random.randint(max_local_size[0]*comm_size)
+        else:
+            n = 0
+        arr = np.random.uniform(low=-1.0e6, high=1.0e6, size=(n,)+max_local_size[1:])
         with h5py.File(filepath, "w") as outfile:
             outfile["data"] = arr
     comm.barrier()
@@ -43,22 +52,47 @@ def do_collective_read(tmp_path, max_local_size, chunk_size=None):
     assert all_equal, "Collective read returned incorrect data"
 
 @pytest.mark.mpi
-def test_collective_read(tmp_path):
+def test_collective_read_empty(tmp_path):
     """
-    Test collective reads of various size datasets
+    Test collective read of an empty dataset
+    """
+    do_collective_read(tmp_path, 0)
+
+@pytest.mark.mpi
+def test_collective_read_1d(tmp_path):
+    """
+    Test collective reads of various size 1D datasets
     """
     for max_local_size in (1, 10, 100, 1000, 10000, 100000):
         do_collective_read(tmp_path, max_local_size)
 
 @pytest.mark.mpi
-def test_collective_read_small_chunks(tmp_path):
+def test_collective_read_small_chunks_1d(tmp_path):
     """
-    Test collective reads of various size datasets
+    Test collective reads of various size 1D datasets
 
     Uses small chunk size to test chunked reads
     """
     for max_local_size in (1, 10, 100, 1000, 10000, 100000):
         do_collective_read(tmp_path, max_local_size, chunk_size=256)
+
+@pytest.mark.mpi
+def test_collective_read_2d(tmp_path):
+    """
+    Test collective reads of various size 2D datasets
+    """
+    for max_local_size in (1, 10, 100, 1000, 10000, 100000):
+        do_collective_read(tmp_path, (max_local_size, 3))
+
+@pytest.mark.mpi
+def test_collective_read_small_chunks_2d(tmp_path):
+    """
+    Test collective reads of various size 2D datasets
+
+    Uses small chunk size to test chunked reads
+    """
+    for max_local_size in (1, 10, 100, 1000, 10000, 100000):
+        do_collective_read(tmp_path, (max_local_size, 3), chunk_size=256)
 
 def do_collective_write(tmp_path, max_local_size, chunk_size=None):
     """
@@ -71,13 +105,22 @@ def do_collective_write(tmp_path, max_local_size, chunk_size=None):
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
 
+    # If max_local_size is an int, make it a single element tuple
+    try:
+        max_local_size = tuple([int(i) for i in max_local_size])
+    except TypeError:
+        max_local_size = (int(max_local_size),)
+
     # Where to write the test file
     filepath = tmp_path / f"collective_read_test_{max_local_size}.hdf5"
     filepath = comm.bcast(filepath)
 
     # Generate the test data
-    n_local   = np.random.randint(max_local_size)
-    arr_local = np.random.uniform(low=-1.0e6, high=1.0e6, size=n_local)
+    if max_local_size[0] > 0:
+        n_local = np.random.randint(max_local_size[0])
+    else:
+        n_local = 0
+    arr_local = np.random.uniform(low=-1.0e6, high=1.0e6, size=(n_local,)+max_local_size[1:])
     
     # Write out the data in collective mode
     with h5py.File(filepath, "w", driver="mpio", comm=comm) as outfile:
@@ -98,17 +141,40 @@ def do_collective_write(tmp_path, max_local_size, chunk_size=None):
     assert all_equal, "Collective write returned incorrect data"
 
 @pytest.mark.mpi
-def test_collective_write(tmp_path):
+def test_collective_write_empty(tmp_path):
     """
-    Test collective writes of various size datasets
+    Test collective write of an empty dataset
+    """
+    do_collective_write(tmp_path, 0)
+
+@pytest.mark.mpi
+def test_collective_write_1d(tmp_path):
+    """
+    Test collective writes of various size 1D datasets
     """
     for max_local_size in (1, 10, 100, 1000, 10000, 100000):
         do_collective_write(tmp_path, max_local_size)
 
 @pytest.mark.mpi
-def test_collective_write_small_chunks(tmp_path):
+def test_collective_write_small_chunks_1d(tmp_path):
     """
-    Test collective writes of various size datasets
+    Test collective writes of various size 1D datasets
     """
     for max_local_size in (1, 10, 100, 1000, 10000, 100000):
         do_collective_write(tmp_path, max_local_size, chunk_size=256)
+
+@pytest.mark.mpi
+def test_collective_write_2d(tmp_path):
+    """
+    Test collective writes of various size 2D datasets
+    """
+    for max_local_size in (1, 10, 100, 1000, 10000, 100000):
+        do_collective_write(tmp_path, (max_local_size,3))
+
+@pytest.mark.mpi
+def test_collective_write_small_chunks_2d(tmp_path):
+    """
+    Test collective writes of various size 2D datasets
+    """
+    for max_local_size in (1, 10, 100, 1000, 10000, 100000):
+        do_collective_write(tmp_path, (max_local_size,3), chunk_size=256)
