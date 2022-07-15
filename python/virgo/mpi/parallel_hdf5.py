@@ -3,14 +3,20 @@
 import numpy as np
 import virgo.mpi.util
 
+# Default maximum size of I/O operations in bytes.
+# This is to avoid MPI issues with buffers >2GB.
+CHUNK_SIZE=100*1024*1024
 
-def collective_read(dataset, comm):
+def collective_read(dataset, comm, chunk_size=None):
     """
     Do a parallel collective read of a HDF5 dataset by splitting
     the dataset equally between MPI ranks along its first axis.
     
     File must have been opened in MPI mode.
     """
+
+    if chunk_size is None:
+        chunk_size = CHUNK_SIZE
 
     # Avoid initializing HDF5 (and therefore MPI) until necessary
     import h5py
@@ -46,8 +52,7 @@ def collective_read(dataset, comm):
             element_size *= s
         local_nr_bytes = num_on_task[comm_rank] * element_size
         # Compute number of iterations this task needs
-        chunk_size_bytes = 2**30
-        chunk_size_elements = chunk_size_bytes // element_size
+        chunk_size_elements = chunk_size // element_size
         local_nr_iterations = num_on_task[comm_rank] // chunk_size_elements
         if num_on_task[comm_rank] % chunk_size_elements > 0:
             local_nr_iterations += 1
@@ -72,15 +77,19 @@ def collective_read(dataset, comm):
     return data
 
 
-def collective_write(group, name, data, comm):
+def collective_write(group, name, data, comm, chunk_size=None):
     """
     Do a parallel collective write of a HDF5 dataset by concatenating
     contributions from MPI ranks along the first axis.
     
     File must have been opened in MPI mode.
-
-    Does not handle >2GB/rank writes or the case of zero data on some ranks.
     """
+
+    if chunk_size is None:
+        chunk_size = CHUNK_SIZE
+
+    import h5py
+    from mpi4py import MPI
 
     # Find communicator file was opened with
     #comm, info = group.file.id.get_access_plist().get_fapl_mpio()
@@ -113,13 +122,54 @@ def collective_write(group, name, data, comm):
     dataset = group.create_dataset(name, shape=full_shape, dtype=dtype_rank0)
 
     # Determine slice to write
-    slice_to_write = np.s_[offset_on_task[comm_rank]:offset_on_task[comm_rank]+num_on_task[comm_rank],...]
+    file_offset   = offset_on_task[comm_rank]
+    nr_left       = num_on_task[comm_rank]
+    memory_offset = 0
 
-    # Do a collective write
-    with dataset.collective:
-        dataset[slice_to_write] = data
+    # Determine how many elements we can write per iteration
+    element_size = data.dtype.itemsize
+    for s in full_shape[1:]:
+        element_size *= s
+    max_elements = chunk_size // element_size
 
-    return data
+    # We need to use the low level interface here because the h5py high
+    # level interface omits zero sized writes, which causes a hang in
+    # collective mode if a rank has nothing to write.
+    dset_id = dataset.id
+    file_space = dset_id.get_space()
+    mem_space = h5py.h5s.create_simple(data.shape)
+    prop_list = h5py.h5p.create(h5py.h5p.DATASET_XFER)
+    prop_list.set_dxpl_mpio(h5py.h5fd.MPIO_COLLECTIVE)
+
+    # Loop until all elements have been written
+    while comm.allreduce(nr_left) > 0:
+
+        # Decide how many elements to write on this rank
+        nr_to_write = min(nr_left, max_elements)
+
+        # Select the region in the file
+        if nr_to_write > 0:
+            start = (file_offset,)+(0,)*(len(data.shape)-1)
+            count = (nr_to_write,)+tuple(full_shape[1:])
+            file_space.select_hyperslab(start, count)
+        else:
+            file_space.select_none()
+
+        # Select the region in memory
+        if nr_to_write > 0:
+            start = (memory_offset,)+(0,)*(len(data.shape)-1)
+            count = (nr_to_write,)+tuple(full_shape[1:])
+            mem_space.select_hyperslab(start, count)
+        else:
+            mem_space.select_none()
+
+        # Write the data
+        dset_id.write(mem_space, file_space, data, dxpl=prop_list)
+
+        # Advance to next chunk
+        file_offset   += nr_to_write
+        memory_offset += nr_to_write
+        nr_left       -= nr_to_write
 
 
 def assign_files(nr_files, nr_ranks):

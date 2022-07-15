@@ -308,7 +308,8 @@ This function writes the distributed array `data` to the h5py.Group specified
 Multidimensional arrays are assumed to be distributed between MPI ranks along
 the first axis.
 
-Note that chunking of large writes is not currently implemented.
+Writes are chunked if necessary to avoid problems with the underlying MPI
+library failing to handle writes of >2GB.
 
 #### Multi-file Parallel I/O
 

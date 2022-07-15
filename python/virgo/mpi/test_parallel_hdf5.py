@@ -5,7 +5,7 @@ import numpy as np
 import h5py
 import virgo.mpi.parallel_hdf5 as phdf5
 
-def do_collective_read(tmp_path, max_local_size):
+def do_collective_read(tmp_path, max_local_size, chunk_size=None):
     """
     Write out a dataset in serial mode, read it back in collective mode
     then gather on rank zero to check that the contents are correct.
@@ -30,7 +30,7 @@ def do_collective_read(tmp_path, max_local_size):
 
     # Read back in the test data
     with h5py.File(filepath, "r", driver="mpio", comm=comm) as infile:
-        arr_coll = phdf5.collective_read(infile["data"], comm)
+        arr_coll = phdf5.collective_read(infile["data"], comm, chunk_size)
 
     # Check the result on rank 0
     arr_coll = comm.gather(arr_coll)
@@ -50,7 +50,17 @@ def test_collective_read(tmp_path):
     for max_local_size in (1, 10, 100, 1000, 10000, 100000):
         do_collective_read(tmp_path, max_local_size)
 
-def do_collective_write(tmp_path, max_local_size):
+@pytest.mark.mpi
+def test_collective_read_small_chunks(tmp_path):
+    """
+    Test collective reads of various size datasets
+
+    Uses small chunk size to test chunked reads
+    """
+    for max_local_size in (1, 10, 100, 1000, 10000, 100000):
+        do_collective_read(tmp_path, max_local_size, chunk_size=256)
+
+def do_collective_write(tmp_path, max_local_size, chunk_size=None):
     """
     Write out a dataset in collective mode, read it back in serial mode
     then gather on rank zero to check that the contents are correct.
@@ -66,12 +76,12 @@ def do_collective_write(tmp_path, max_local_size):
     filepath = comm.bcast(filepath)
 
     # Generate the test data
-    n_local   = np.random.randint(max_local_size) + 1
+    n_local   = np.random.randint(max_local_size)
     arr_local = np.random.uniform(low=-1.0e6, high=1.0e6, size=n_local)
     
     # Write out the data in collective mode
     with h5py.File(filepath, "w", driver="mpio", comm=comm) as outfile:
-        phdf5.collective_write(outfile, "data", arr_local, comm)
+        phdf5.collective_write(outfile, "data", arr_local, comm, chunk_size)
     comm.barrier()
 
     # Gather data on rank zero and check
@@ -94,3 +104,11 @@ def test_collective_write(tmp_path):
     """
     for max_local_size in (1, 10, 100, 1000, 10000, 100000):
         do_collective_write(tmp_path, max_local_size)
+
+@pytest.mark.mpi
+def test_collective_write_small_chunks(tmp_path):
+    """
+    Test collective writes of various size datasets
+    """
+    for max_local_size in (1, 10, 100, 1000, 10000, 100000):
+        do_collective_write(tmp_path, max_local_size, chunk_size=256)
