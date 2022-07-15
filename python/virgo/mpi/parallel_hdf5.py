@@ -78,6 +78,8 @@ def collective_write(group, name, data, comm):
     contributions from MPI ranks along the first axis.
     
     File must have been opened in MPI mode.
+
+    Does not handle >2GB/rank writes or the case of zero data on some ranks.
     """
 
     # Find communicator file was opened with
