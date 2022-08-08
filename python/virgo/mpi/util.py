@@ -68,7 +68,8 @@ def replace_none_with_zero_size(arr, comm=None):
         return arr
 
 
-def group_index_from_length_and_offset(length, offset, nr_local_ids, comm=None):
+def group_index_from_length_and_offset(length, offset, nr_local_ids,
+                                       return_rank=False, comm=None):
     """
     Given distributed arrays with the lengths and offsets
     of groups in an array of particle IDs, compute the group
@@ -144,15 +145,37 @@ def group_index_from_length_and_offset(length, offset, nr_local_ids, comm=None):
                     index_recv,  rank_recv_count, rank_recv_offset,
                     comm=comm)
 
-    # Assign group membership to local particle IDs
+    # Find number of particles on previous MPI ranks
     nr_ids_prev = comm.scan(nr_local_ids) - nr_local_ids
+
+    # Allocate output arrays
     grnr = -np.ones(nr_local_ids, dtype=np.int32)
+    if return_rank:
+        rank = -np.ones(nr_local_ids, dtype=np.int32)
+
+    # Convert received offsets to local array indexes
     i1 = offset_recv - nr_ids_prev
     i2 = offset_recv + length_recv - nr_ids_prev
+    # Negative start index i1 indicates that some particles in the group are on a previous MPI rank
+    if return_rank:
+        rank_offset = np.where(i1 < 0, np.abs(i1), 0)
+    # Ensure all local array indexes are in range
     i1[i1 < 0] = 0
     i2[i2 > nr_local_ids] = nr_local_ids
+
+    # Assign group indexes to local particles
     for ind, start, end in zip(index_recv, i1, i2):
         if end > start:
             grnr[start:end] = ind
-            
-    return grnr
+
+    # Compute rank of each local particle within its group
+    if return_rank:
+        for offset, start, end, num in zip(rank_offset, i1, i2, i2-i1):
+            if num > 0:
+                rank[start:end] = np.arange(offset, offset+num, dtype=rank.dtype)
+
+    # Return the results
+    if return_rank:
+        return grnr, rank
+    else:
+        return grnr

@@ -53,18 +53,21 @@ def make_random_lengths_and_offsets(min_size, max_size, nr_groups):
     ids_per_rank = comm.bcast(ids_per_rank)
     nr_local_ids = ids_per_rank[comm_rank]
 
-    # Compute group index for each particle
+    # Compute group index and rank for each particle
     if comm_rank == 0:
         grnr = -np.ones(total_nr_ids, dtype=int)
+        rank = -np.ones(total_nr_ids, dtype=int)
         for i, (l, o) in enumerate(zip(lengths, offsets)):
             grnr[o:o+l] = i
+            rank[o:o+l] = np.arange(l, dtype=int)
     else:
         grnr = None
+        rank = None
 
-    return local_lengths, local_offsets, nr_local_ids, lengths, offsets, total_nr_ids, grnr
+    return local_lengths, local_offsets, nr_local_ids, lengths, offsets, total_nr_ids, grnr, rank
 
 
-def check_lengths_offsets(min_size, max_size, nr_groups):
+def check_lengths_offsets(min_size, max_size, nr_groups, with_rank=False):
     """
     Make a randomly generated group catalogue with known group numbers
     and try to reproduce the group numbers with 
@@ -79,21 +82,32 @@ def check_lengths_offsets(min_size, max_size, nr_groups):
     # Create the test dataset
     (local_lengths, local_offsets,
      nr_local_ids, lengths, offsets,
-     total_nr_ids, grnr) = make_random_lengths_and_offsets(min_size, max_size, nr_groups)
+    total_nr_ids, grnr, rank) = make_random_lengths_and_offsets(min_size, max_size, nr_groups)
 
     # Try to recompute the group indexes
-    grnr_local = util.group_index_from_length_and_offset(local_lengths, local_offsets, nr_local_ids)
+    if with_rank:
+        grnr_local, rank_local = util.group_index_from_length_and_offset(local_lengths, local_offsets,
+                                                                         nr_local_ids, return_rank=True)
+    else:
+        grnr_local = util.group_index_from_length_and_offset(local_lengths, local_offsets, nr_local_ids)
+        rank_local = None
 
     # Gather result on rank 0 and check
     grnr_gathered = comm.gather(grnr_local)
+    rank_gathered = comm.gather(rank_local)
     if comm_rank == 0:
         grnr_gathered = np.concatenate(grnr_gathered)
-        all_equal = np.all(grnr_gathered == grnr)
+        all_ok = np.all(grnr_gathered == grnr)
+        if with_rank:
+            rank_gathered = np.concatenate(rank_gathered)
+            if np.any(rank_gathered != rank):
+                all_ok = False
     else:
-        all_equal = None
-    all_equal = comm.bcast(all_equal)
+        all_ok = None
+    all_ok = comm.bcast(all_ok)
 
-    assert all_equal, "Computed group numbers are not correct"
+    assert all_ok, "Computed group numbers and/or ranks are not correct"
+
 
 @pytest.mark.mpi
 def test_lengths_offsets_small():
@@ -106,4 +120,16 @@ def test_lengths_offsets_large():
 @pytest.mark.mpi
 def test_lengths_offsets_range():
     check_lengths_offsets(min_size=10, max_size=100000, nr_groups=1000)
+
+@pytest.mark.mpi
+def test_lengths_offsets_small_with_rank():
+    check_lengths_offsets(min_size=10, max_size=20, nr_groups=10000, with_rank=True)
+
+@pytest.mark.mpi
+def test_lengths_offsets_large_with_rank():
+    check_lengths_offsets(min_size=1000, max_size=100000, nr_groups=100, with_rank=True)
+
+@pytest.mark.mpi
+def test_lengths_offsets_range_with_rank():
+    check_lengths_offsets(min_size=10, max_size=100000, nr_groups=1000, with_rank=True)
     
