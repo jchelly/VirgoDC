@@ -417,7 +417,7 @@ for dealing with simulation and halo finder output.
 
 ```
 virgo.mpi.util.group_index_from_length_and_offset(length, offset,
-    nr_local_ids, comm=None)
+    nr_local_ids, return_rank=False, comm=None)
 ```
 
 Given distributed arrays with the lengths and offsets of particles in a subfind
@@ -440,6 +440,10 @@ return grnr
 
 This can be used in combination with virgo.mpi.parallel_sort.parallel_match()
 to find subfind group membership for particles in a simulation snapshot.
+
+If the parameter return_rank=True then it also returns an array with the 
+rank ordering of each particle in its halo, with zero indicating the first
+particle in the halo. 
 
 #### Allocating zero-sized arrays on ranks with no data
 
