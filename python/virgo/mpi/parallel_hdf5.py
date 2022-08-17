@@ -91,6 +91,9 @@ def collective_write(group, name, data, comm, chunk_size=None):
     import h5py
     from mpi4py import MPI
 
+    # Ensure input is a contiguous numpy array
+    data = np.ascontiguousarray(data)
+
     # Find communicator file was opened with
     #comm, info = group.file.id.get_access_plist().get_fapl_mpio()
     comm_rank = comm.Get_rank()
@@ -499,6 +502,9 @@ class MultiFile:
         input. Use mode parameter to choose whether to create new
         files or modify existing files.
         """
+
+        # Ensure input is a contiguous numpy array
+        data = np.ascontiguousarray(data)
 
         if self.collective:
             # Collective mode
