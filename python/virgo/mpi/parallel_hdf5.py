@@ -463,9 +463,7 @@ class MultiFile:
 
     def _write_collective(self, data, elements_per_file, filenames, mode, group=None, attrs=None):
         """
-        Read and concatenate arrays from multiple files,
-        assuming more MPI ranks than files so each rank
-        reads part of a file.
+        Write arrays to multiple files in collective mode.
         """
 
         # Avoid initializing HDF5 (and therefore MPI) until necessary
@@ -502,9 +500,6 @@ class MultiFile:
         input. Use mode parameter to choose whether to create new
         files or modify existing files.
         """
-
-        # Ensure input is a contiguous numpy array
-        data = np.ascontiguousarray(data)
 
         if self.collective:
             # Collective mode
