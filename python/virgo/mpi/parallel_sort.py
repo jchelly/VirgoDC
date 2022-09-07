@@ -866,3 +866,103 @@ def gather_to_first_rank(arr, comm):
         return np.concatenate(arr_g)
     else:
         return None
+
+
+def reduce_elements(arr, updates, index, op, comm=None):
+    """
+    Update the elements given by index of distributed array arr by
+    reducing them with the values in updates using MPI operator op.
+
+    For example, on one MPI rank with op=MPI.SUM this is equivalent
+    to
+
+    arr[index,...] += updates
+
+    On multiple MPI ranks the index is global and may refer to
+    elements of arr which are stored on other ranks.
+
+    For multidimensional arrays index is taken to refer to the first
+    dimension.
+    """
+
+    # Get communicator to use
+    from mpi4py import MPI
+    if comm is None:
+        comm = MPI.COMM_WORLD
+
+    # Ensure input indexes are an array of index_dtype
+    index = np.asarray(index, dtype=index_dtype)
+
+    # Check that all elements are in range
+    if np.any(index < 0) or np.any(index >= arr.shape[0]):
+        print("update_elements() - index out of range!")
+        comm.Abort()
+
+    # Check that index is 1D
+    if len(index.shape) != 1:
+        print("update_elements() - index must be one dimensional!")
+        comm.Abort()
+
+    # Check that we have the expected number of updates
+    if index.shape[0] != updates.shape[0]:
+        print("update_elements() - index and updates must have same first dimension!")
+        comm.Abort()
+
+    # Check that updates have the same shape as arr (except first dimension)
+    if updates.shape[1:] != arr.shape[1:]:
+        print("update_elements() - arr and updates have inconsistent shapes!")
+        comm.Abort()
+
+    # Find the range of global indexes of arr on each rank
+    local_offset = comm.scan(len(arr)) - len(arr)
+    local_length = len(arr)
+    all_local_offsets = np.asarray(comm.allgather(local_offset), dtype=index_dtype)
+    all_local_lengths = np.asarray(comm.allgather(local_lengths), dtype=index_dtype)
+
+    # Sort updates by destination index
+    order   = np.argsort(index)
+    index   = index[order]
+    updates = updates[order]
+    del order
+
+    # Find which rank each update needs to go to
+    send_offset = np.searchsorted(index, all_local_offsets, side="left")
+    send_count = np.zeros_like(send_offset)
+    send_count[:-1] = send_offset[1:] - send_offset[:-1]
+    send_count[-1] = len(index) - send_offset[-1]
+    assert sum(send_count) == len(index)
+
+    # Compute send and receive counts
+    send_displ = np.cumsum(send_count) - send_count
+    recv_count = np.ndarray(comm_size, dtype=index_dtype)
+    comm.Alltoall(send_count, recv_count)
+    recv_displ = np.cumsum(recv_count) - recv_count
+
+    # Exchange indexes to update
+    index_recv = np.empty_like(index, shape=sum(recv_count))
+    my_alltoallv(index,      send_count, send_displ,
+                 index_recv, recv_count, recv_displ,
+                 comm=comm)
+
+    # Compute number of values per index (in case of multidimensional input)
+    nvalues = 1
+    for s in updates.shape[1:]:
+        nvalues *= s
+
+    # Exchange updates
+    recv_shape = (sum(recv_count),) + updates.shape[1:]
+    updates_recv = np.empty_like(updates, shape=recv_shape)
+    my_alltoallv(updates.reshape((-1,)),      nvalues*send_count, nvalues*send_displ,
+                 updates_recv.reshape((-1,)), nvalues*recv_count, nvalues*recv_displ,
+                 comm=comm)
+
+    # Convert received array indexes to local indexes
+    index_recv -= local_offset
+    assert np.all(index_recv >= 0)
+    assert np.all(index_recv <= len(arr))
+
+    # Apply updates to the local array elements
+    for i, j in enumerate(index_recv):
+        op.Reduce_local(updates_recv[i,...], arr[j,...])
+
+
