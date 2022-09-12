@@ -321,12 +321,21 @@ def find_splitting_points(arr, r, comm=None):
 
     local_median = np.zeros(nranks, dtype=arr.dtype)
     local_weight = np.zeros(nranks, dtype=float)
-    est_median   = np.zeros(nranks, dtype=arr.dtype)
+    est_median   = np.zeros(max(nranks, comm_size), dtype=arr.dtype)
 
     # Arrays with result
     res_median   = np.zeros(nranks, dtype=arr.dtype)
     res_min_rank = np.zeros(nranks, dtype=index_dtype)
     res_max_rank = np.zeros(nranks, dtype=index_dtype)
+
+    # Send/recv buffers
+    send_median = np.zeros(comm_size, dtype=local_median.dtype)
+    send_weight = np.zeros(comm_size, dtype=local_weight.dtype)
+    recv_median = np.zeros(comm_size, dtype=local_median.dtype)
+    recv_weight = np.zeros(comm_size, dtype=local_weight.dtype)
+
+    # MPI type corresponding to the array to sort
+    mpi_type = mpi_datatype(local_median.dtype)
 
     # Iterate until we find all splitting points
     while any(done==False):
@@ -356,35 +365,27 @@ def find_splitting_points(arr, r, comm=None):
         else:
             # if nranks <= comm_size we can assign each rank to a different MPI task
             # and compute the medians in parallel
-            send_median = np.zeros(comm_size, dtype=local_median.dtype)
             send_median[:nranks] = local_median
-            send_weight = np.zeros(comm_size, dtype=local_weight.dtype)
             send_weight[:nranks] = local_weight
-            recv_median = np.zeros(comm_size, dtype=local_median.dtype)
-            recv_weight = np.zeros(comm_size, dtype=local_weight.dtype)
-            mpi_type = mpi_datatype(local_median.dtype)
             comm.Alltoall([send_median, mpi_type], [recv_median, mpi_type])
-            mpi_type.Free()
             comm.Alltoall(send_weight, recv_weight)
             if comm_rank < nranks and not(done[comm_rank]):
-                est_median = weighted_median(recv_median, recv_weight)
+                local_est_median = weighted_median(recv_median, recv_weight)
             else:
-                est_median = None
-            # All MPI tasks need the full array of medians. Only contains entries for ranks which are not done.
-            est_median = [em for em in comm.allgather(est_median) if em is not None]
-            est_median = np.asarray(est_median)
+                local_est_median = recv_median[0] # Not used, but need to set a value for Allgather
+            # All MPI tasks need the full array of medians
+            comm.Allgather([local_est_median, mpi_type], [est_median, mpi_type])
         
-        # Find first and last elements where estimated medians
-        # can be inserted in sorted array
-        ifirst = np.searchsorted(arr, est_median, side='left')
-        ilast  = np.searchsorted(arr, est_median, side='right')
+        # Find first and last elements where estimated medians can be inserted in sorted array
+        ifirst = np.searchsorted(arr, est_median[:nranks][done==False], side='left')
+        ilast  = np.searchsorted(arr, est_median[:nranks][done==False], side='right')
         fsum = np.empty_like(ifirst)
         comm.Allreduce(ifirst, fsum)
         lsum = np.empty_like(ilast)
         comm.Allreduce(ilast, lsum)
 
-        j = 0
-        for i in range(nranks):
+        j = 0 # Index into arrays which only have elements for ranks with done=False
+        for i in range(nranks): # Index into arrays with elements for all ranks
             if not done[i]:
                 # Check if we've found the target rank
                 min_rank = fsum[j]      # Min rank est_median could have
@@ -392,7 +393,7 @@ def find_splitting_points(arr, r, comm=None):
                 # If requested rank is in the range of ranks with value
                 # est_median, we're done.
                 if r[i] >= min_rank and r[i] <= max_rank:
-                    res_median[i]   = est_median[j]
+                    res_median[i]   = est_median[i]
                     res_min_rank[i] = min_rank
                     res_max_rank[i] = max_rank
                     done[i]         = True
@@ -403,6 +404,8 @@ def find_splitting_points(arr, r, comm=None):
                 if min_rank > r[i]:
                     imax[i] = min((imax[i], ifirst[j] - 1))
                 j += 1
+
+    mpi_type.Free()
 
     return res_median, res_min_rank, res_max_rank
 
