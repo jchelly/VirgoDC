@@ -1,23 +1,26 @@
 #!/bin/env python
 
+import time
 import numpy as np
 import pytest
 import virgo.mpi.parallel_sort as psort
 
-def assert_all_ranks(condition, message):
+def assert_all_ranks(condition, message, comm=None):
     """Fails assertion on all ranks if condition is False on any rank"""
     from mpi4py import MPI
-    comm = MPI.COMM_WORLD
+    if comm is None:
+        comm = MPI.COMM_WORLD
     condition = comm.allreduce(condition, op=MPI.MIN)
     assert condition, message
 
-def assert_rank_zero(condition, message):
+def assert_rank_zero(condition, message, comm=None):
     """
     Fails assertion on all ranks if condition is False on rank zero.
     Value of condition is not significant on other ranks.
     """
     from mpi4py import MPI
-    comm = MPI.COMM_WORLD
+    if comm is None:
+        comm = MPI.COMM_WORLD
     comm_rank = comm.Get_rank()    
     condition = comm.bcast(condition)
     assert condition, message
@@ -263,7 +266,7 @@ def test_unique():
         assert_rank_zero(all_unique_equal, "Unique values are incorrect")
         assert_rank_zero(all_counts_equal, "Unique counts are incorrect")
 
-def run_large_parallel_sort(elements_per_rank):
+def run_large_parallel_sort(elements_per_rank, comm=None):
     """
     Test parallel_sort() on larger input arrays.
 
@@ -275,7 +278,8 @@ def run_large_parallel_sort(elements_per_rank):
     """
     
     from mpi4py import MPI
-    comm = MPI.COMM_WORLD
+    if comm is None:
+        comm = MPI.COMM_WORLD
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
 
@@ -309,20 +313,20 @@ def run_large_parallel_sort(elements_per_rank):
     num_val_end = comm.allreduce(num_val_end)
     
     # Check local ordering
-    assert_all_ranks(np.all(arr[1:]>=arr[:-1]), "Array is not sorted correctly within a rank!")
+    assert_all_ranks(np.all(arr[1:]>=arr[:-1]), "Array is not sorted correctly within a rank!", comm)
 
     # Check ordering between ranks
     if comm_size > 1:
         rank_min_val = np.asarray(comm.allgather(np.amin(arr)))
         rank_max_val = np.asarray(comm.allgather(np.amax(arr)))
-        assert_all_ranks(np.all(rank_min_val[1:] >= rank_max_val[:-1]), "Array is not sorted correctly between ranks!")
+        assert_all_ranks(np.all(rank_min_val[1:] >= rank_max_val[:-1]), "Array is not sorted correctly between ranks!", comm)
 
     # Check number of instances of each value has been preserved
-    assert_all_ranks(np.all(num_val_start == num_val_end), "Sorted array is not a reordered copy of the input!")
+    assert_all_ranks(np.all(num_val_start == num_val_end), "Sorted array is not a reordered copy of the input!", comm)
 
     # Try to reconstruct the sorted array from the index
     arr_check = psort.fetch_elements(arr_unsorted, index, comm=comm)
-    assert_all_ranks(np.all(arr_check==arr), "Index does not reproduce sorted array!")
+    assert_all_ranks(np.all(arr_check==arr), "Index does not reproduce sorted array!", comm)
 
     return elapsed
 
