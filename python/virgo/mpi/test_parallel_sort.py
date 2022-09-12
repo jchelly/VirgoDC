@@ -289,9 +289,20 @@ def run_large_parallel_sort(elements_per_rank):
     num_val_start = np.bincount(arr, minlength=max_value)
     num_val_start = comm.allreduce(num_val_start)
 
-    # Sort the array
+    # Keep a copy of the array for verifying the result
     arr_unsorted = arr.copy()
+
+    # Start the clock
+    comm.barrier()
+    t0 = time.time()
+
+    # Sort the array
     index = psort.parallel_sort(arr, comm=comm, return_index=True)
+
+    # Stop the clock
+    comm.barrier()
+    t1 = time.time()
+    elapsed = comm.allreduce(t1-t0, op=MPI.MAX)
 
     # Count number of instances of each value
     num_val_end = np.bincount(arr, minlength=max_value)
@@ -312,6 +323,8 @@ def run_large_parallel_sort(elements_per_rank):
     # Try to reconstruct the sorted array from the index
     arr_check = psort.fetch_elements(arr_unsorted, index, comm=comm)
     assert_all_ranks(np.all(arr_check==arr), "Index does not reproduce sorted array!")
+
+    return elapsed
 
 @pytest.mark.mpi
 def test_large_parallel_sort():
