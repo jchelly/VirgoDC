@@ -300,10 +300,12 @@ library failing to handle reads of >2GB.
 #### Collective HDF5 Write
 
 ```
-virgo.mpi.parallel_hdf5.collective_write(group, name, data, comm)
+virgo.mpi.parallel_hdf5.collective_write(group, name, data, comm, create_dataset=True)
 ```
 This function writes the distributed array `data` to the h5py.Group specified
- by the `group` parameter with name `name`.
+ by the `group` parameter with name `name`. If create_dataset is True then a
+new dataset will be created. Otherwise, it is assumed that a dataset with
+suitable type and dimensions already exists.
 
 Multidimensional arrays are assumed to be distributed between MPI ranks along
 the first axis.

@@ -77,7 +77,7 @@ def collective_read(dataset, comm, chunk_size=None):
     return data
 
 
-def collective_write(group, name, data, comm, chunk_size=None):
+def collective_write(group, name, data, comm, chunk_size=None, create_dataset=True):
     """
     Do a parallel collective write of a HDF5 dataset by concatenating
     contributions from MPI ranks along the first axis.
@@ -121,8 +121,11 @@ def collective_write(group, name, data, comm, chunk_size=None):
     # Find the full shape of the new dataset
     full_shape = [ntot,] + list(shape_local)
 
-    # Create the dataset
-    dataset = group.create_dataset(name, shape=full_shape, dtype=dtype_rank0)
+    # Create the dataset if necessary
+    if create_dataset:
+        dataset = group.create_dataset(name, shape=full_shape, dtype=dtype_rank0)
+    else:
+        dataset = group[name]
 
     # Determine slice to write
     file_offset   = offset_on_task[comm_rank]
