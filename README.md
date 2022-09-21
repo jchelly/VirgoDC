@@ -410,6 +410,12 @@ The get_elements_per_file() method can be used to get the value of
 elements_per_file needed to write output partitioned in the same way as some
 input file set.
 
+WARNING: it is only safe to use this to write arrays which are distributed
+between MPI ranks in the same way as an array which was read using
+MultiFile.read(), because it assumes that array elements are already on the
+rank which will write the file they should go to. Setting arbitrary values of
+elements_per_file will cause incorrect output or a crash.
+
 ### MPI Utility Functions
 
 The module virgo.mpi.util contains several other functions which are helpful
