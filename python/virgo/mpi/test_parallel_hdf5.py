@@ -4,6 +4,7 @@ import pytest
 import numpy as np
 import h5py
 import virgo.mpi.parallel_hdf5 as phdf5
+import virgo.mpi.parallel_sort as psort
 
 def do_collective_read(tmp_path, max_local_size, chunk_size=None):
     """
@@ -251,7 +252,6 @@ def read_multi_file_output(tmp_path, basename):
 
     # Compare
     if comm_rank == 0:
-        print(arr.shape, arr_check.shape)
         all_equal = np.all(arr==arr_check)
     else:
         all_equal = None
@@ -306,3 +306,88 @@ def test_multi_file_one_file_per_rank(tmp_path):
 
     for n in (0, 1, 10, 100, 1000, 10000):
         do_multi_file_test(tmp_path, basename="file_per_rank", nr_files=comm_size, elements_per_file=n)
+
+def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename):
+    """
+    Check that writing out a distributed array to a file set
+    then reading it back in preserves the values.
+    """
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_size = comm.Get_size()
+
+    # Sync path between ranks
+    tmp_path = comm.bcast(tmp_path)
+
+    # Create the data to read/write
+    create_multi_file_output(tmp_path, basename, nr_files, elements_per_file)
+    comm.barrier()
+
+    # Make format string for the file names
+    filenames1 = str(tmp_path / f"{basename}.%(file_nr)d.hdf5")
+
+    # Read the data using the MultiFile class
+    mf = phdf5.MultiFile(filenames1, file_nr_attr=("Header", "nr_files"), comm=comm)
+    data = mf.read(("data",))["data"]
+
+    # Write the same data to a new set of files
+    elements_per_file = mf.get_elements_per_file("data")
+    filenames2 = str(tmp_path / f"{basename}.mf_write_test.%(file_nr)d.hdf5")
+    mf.write({"data" : data}, elements_per_file, filenames2, "w", )
+
+    comm.barrier()
+
+    # Check that the file sets have the same contents
+    if comm.Get_rank() == 0:
+        equal = True
+        for file_nr in range(nr_files):
+            filename1 = filenames1 % {"file_nr" : file_nr}
+            with h5py.File(filename1, "r") as infile:
+                arr1 = infile["data"][...]
+            filename2 = filenames2 % {"file_nr" : file_nr}
+            with h5py.File(filename2, "r") as infile:
+                arr2 = infile["data"][...]
+            equal = equal & (len(arr1)==len(arr2)) & np.all(arr1==arr2)
+    else:
+        equal = None
+    equal = comm.bcast(equal)
+    assert equal, "Array written to file set did not round trip"
+
+@pytest.mark.mpi
+def test_round_trip_single_file(tmp_path):
+    multi_file_round_trip(tmp_path, nr_files=1, elements_per_file=10000,
+                          basename="round_trip_single_file")
+
+@pytest.mark.mpi
+def test_round_trip_file_per_rank(tmp_path):
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_size = comm.Get_size()
+
+    multi_file_round_trip(tmp_path, nr_files=comm_size, elements_per_file=10000,
+                          basename="round_trip_file_per_rank")
+
+@pytest.mark.mpi
+def test_round_trip_few_files(tmp_path):
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_size = comm.Get_size()
+
+    nr_files = max(1, (comm_size // 2))
+    multi_file_round_trip(tmp_path, nr_files=nr_files, elements_per_file=10000,
+                          basename="round_trip_few_files")
+
+@pytest.mark.mpi
+def test_round_trip_many_files(tmp_path):
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_size = comm.Get_size()
+
+    nr_files = comm_size * 2
+    multi_file_round_trip(tmp_path, nr_files=nr_files, elements_per_file=10000,
+                          basename="round_trip_many_files")
+
