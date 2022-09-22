@@ -374,16 +374,16 @@ arbitrary number of files, for example.
 ```
 virgo.mpi.parallel_hdf5.MultiFile.get_elements_per_file(self, name, group=None)
 ```
-This returns the number of elements in each file for the specified dataset
+This returns the number of elements read from each file for the specified
+dataset. Note that in collective mode the return value varies between ranks
+because each rank returns the number of elements which it will read from the file,
+and not the total number of elements in the file.
+
+This should therefore only be used with `MultiFile.write()` to write output
+distributed between files in the same way as an input file set.
+
   * `name` - name of the dataset
   * `group` - name of the group containing the dataset
-
-Returns the number of elements per file along the first axis. Note that this
-is NOT a distributed array - a copy of the full array is returned on each MPI
-rank if this is called collectively.
-
-Can be used with `MultiFile.write()` to write output distributed between files
-in the same way as an input file set.
 
 ##### Writing datasets to a file set
 
@@ -398,7 +398,8 @@ as in the input file set used to initialize the class.
   * `data` - a dict containing the distributed arrays to write out. The dict
     keys are used as output dataset names
   * `elements_per_file` - the number of elements along the first axis to write
-    to each output file
+    to each output file. In collective mode this is the number of elements to
+    write from each rank.
   * `filenames` - a format string to generate the names of files in the set.
     The file number is substituted in as `filenames % {"file_nr" : file_nr}`
   * `mode` - should be 'r+' to write to existing files or 'w' to create new files
@@ -415,6 +416,10 @@ between MPI ranks in the same way as an array which was read using
 MultiFile.read(), because it assumes that array elements are already on the
 rank which will write the file they should go to. Setting arbitrary values of
 elements_per_file will cause incorrect output or a crash.
+
+TODO: make elements_per_file actually reflect the number of elements per file
+and implement automatic repartitioning of the input so that arbitrary values
+of elements_per_file will work as expected.
 
 ### MPI Utility Functions
 
