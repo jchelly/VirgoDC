@@ -486,12 +486,11 @@ class MultiFile:
 
                 # Write the data
                 length = elements_per_file[self.all_file_indexes[i]]
-                if length > 0:
-                    for name in data:
-                        loc[name] = data[name][offset:offset+length,...]
-                        if attrs is not None and name in attrs:
-                            for attr_name, attr_val in attrs[name].items():
-                                loc[name].attrs[attr_name] = attr_val
+                for name in data:
+                    loc[name] = data[name][offset:offset+length,...]
+                    if attrs is not None and name in attrs:
+                        for attr_name, attr_val in attrs[name].items():
+                            loc[name].attrs[attr_name] = attr_val
 
                 offset += length
 
@@ -519,8 +518,7 @@ class MultiFile:
             length = elements_per_file[self.all_file_indexes[self.collective_file_nr]]
             assert length == data[name].shape[0]
             length_tot = comm.allreduce(length)
-            if length_tot > 0:
-                collective_write(loc, name, data[name], comm)
+            collective_write(loc, name, data[name], comm)
             if attrs is not None and name in attrs:
                 for attr_name, attr_val in attrs[name].items():
                     loc[name].attrs[attr_name] = attr_val
