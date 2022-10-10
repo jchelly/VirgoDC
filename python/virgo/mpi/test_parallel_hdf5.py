@@ -181,7 +181,7 @@ def test_collective_write_small_chunks_2d(tmp_path):
         do_collective_write(tmp_path, (max_local_size,3), chunk_size=256)
 
 def create_multi_file_output(tmp_path, basename, nr_files, elements_per_file,
-                             group=None):
+                             group=None, have_missing=False):
     """
     Write an array distributed over multiple files
     """
@@ -192,6 +192,18 @@ def create_multi_file_output(tmp_path, basename, nr_files, elements_per_file,
     comm_rank = comm.Get_rank()
     
     if comm_rank == 0:
+
+        # Decide which files will have no dataset
+        if have_missing:
+            assert nr_files > 1
+            while True:
+                have_data = np.random.rand(nr_files) < 0.5
+                if sum(have_data) != 0 and sum(have_data) != nr_files:
+                    break
+        else:
+            have_data = np.ones(nr_files, dtype=bool)
+
+        # Loop over files to create
         for file_nr in range(nr_files):
 
             # Generate the filename
@@ -206,11 +218,12 @@ def create_multi_file_output(tmp_path, basename, nr_files, elements_per_file,
 
             # Write the file
             with h5py.File(file_path, "w") as outfile:
-                if group is not None:
-                    outfile.create_group(group)
-                    outfile[group]["data"] = arr
-                else:
-                    outfile["data"] = arr
+                if have_data[file_nr]:
+                    if group is not None:
+                        outfile.create_group(group)
+                        outfile[group]["data"] = arr
+                    else:
+                        outfile["data"] = arr
                 outfile["nr_files"] = nr_files
                 h = outfile.create_group("Header")
                 h.attrs["nr_files"] = nr_files
@@ -252,9 +265,11 @@ def read_multi_file_output(tmp_path, basename, group=None):
             try:
                 with h5py.File(filename, "r") as infile:
                     if group is None:
-                        arr_check.append(infile["data"][...])
+                        if "data" in infile:
+                            arr_check.append(infile["data"][...])
                     else:
-                        arr_check.append(infile[group]["data"][...])                        
+                        if group in infile and "data" in infile[group]:
+                            arr_check.append(infile[group]["data"][...])                        
             except FileNotFoundError:
                 break
             else:
@@ -269,14 +284,15 @@ def read_multi_file_output(tmp_path, basename, group=None):
     all_equal = comm.bcast(all_equal)
     assert all_equal, "Multi file output was not read correctly"
 
-def do_multi_file_test(tmp_path, basename, nr_files, elements_per_file, group=None):
+def do_multi_file_test(tmp_path, basename, nr_files, elements_per_file, group=None, have_missing=False):
     """Create and read in a set of files"""
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
     tmp_path = comm.bcast(tmp_path) # Use same path on all ranks
 
-    create_multi_file_output(tmp_path, basename, nr_files, elements_per_file, group=group)
+    create_multi_file_output(tmp_path, basename, nr_files, elements_per_file, group=group,
+                             have_missing=have_missing)
     read_multi_file_output(tmp_path, basename, group=group)
 
 @pytest.mark.mpi
@@ -312,6 +328,17 @@ def test_multi_file_more_files_than_ranks_group(tmp_path):
                            group="group")
 
 @pytest.mark.mpi
+def test_multi_file_more_files_than_ranks_group_missing(tmp_path):
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_size = comm.Get_size()
+
+    for n in (0, 1, 10, 100, 1000, 10000):
+        do_multi_file_test(tmp_path, basename="more_files_group_missing", nr_files=comm_size+1, elements_per_file=n,
+                           group="group", have_missing=True)
+
+@pytest.mark.mpi
 def test_multi_file_more_ranks_than_files(tmp_path):
 
     from mpi4py import MPI
@@ -339,6 +366,21 @@ def test_multi_file_more_ranks_than_files_group(tmp_path):
     for n in (0, 1, 10, 100, 1000, 10000):
         do_multi_file_test(tmp_path, basename="more_ranks_group", nr_files=nr_files, elements_per_file=n,
                            group="group")
+
+@pytest.mark.mpi
+def test_multi_file_more_ranks_than_files_group_missing(tmp_path):
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_size = comm.Get_size()
+
+    nr_files = comm_size-1
+    if nr_files <= 1:
+        pytest.skip("Need >2 MPI ranks for this test")
+
+    for n in (0, 1, 10, 100, 1000, 10000):
+        do_multi_file_test(tmp_path, basename="more_ranks_group_missing", nr_files=nr_files, elements_per_file=n,
+                           group="group", have_missing=True)
 
 @pytest.mark.mpi
 def test_multi_file_one_file_per_rank(tmp_path):
