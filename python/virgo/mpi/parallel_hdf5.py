@@ -198,6 +198,15 @@ class MultiFile:
     Class to read and concatenate arrays from sets of HDF5 files.
     Does parallel reads of N files on M MPI ranks for arbitrary
     N and M.
+
+    filenames - a format string to generate the names of files in the set.
+                File number is subbed in as `filenames % {"file_nr" : file_nr}`
+    file_nr_attr - a tuple with (HDF5 object name, attribute name) which
+                specifies a HDF5 attribute containing the number of files in the set.
+                E.g. in a Gadget snapshot use `file_nr_attr=("Header","NumFilesPerSnapshot")`.
+    file_nr_dataset - the name of a dataset with the number of files in the set
+    file_idx - an array with the indexes of the files in the set
+    comm - MPI communicator to use
     """
     def __init__(self, filenames, file_nr_attr=None, file_nr_dataset=None, file_idx=None, comm=None):
 
@@ -280,15 +289,24 @@ class MultiFile:
             with h5py.File(filename, "r") as infile:
                 
                 # Find HDF5 group to read from
-                loc = infile if group is None else infile[group]
+                if group is None:
+                    # No group was specified, so will use the file root group
+                    loc = infile
+                elif group in infile:
+                    # We have a group name and it exists in the file
+                    loc = infile[group]
+                else:
+                    # The specified group does not exist in this file
+                    loc = None
 
                 # Read the data, skipping any missing arrays
-                for name in data:
-                    if name in loc:
-                        data[name].append(loc[name][...])
-                        if file_nr is not None and name in file_nr:
-                            n = data[name][-1].shape[0]
-                            file_nr[name].append(np.ones(n, dtype=int)*self.all_file_indexes[i])
+                if loc is not None:
+                    for name in data:
+                        if name in loc:
+                            data[name].append(loc[name][...])
+                            if file_nr is not None and name in file_nr:
+                                n = data[name][-1].shape[0]
+                                file_nr[name].append(np.ones(n, dtype=int)*self.all_file_indexes[i])
 
         # Combine data from different files
         for name in data:
@@ -334,23 +352,33 @@ class MultiFile:
         filename = self.filenames[self.collective_file_nr]
         infile = h5py.File(filename, "r", driver="mpio", comm=comm)
 
+        # Find HDF5 group to read from
+        if group is None:
+            # No group was specified, so will use the file root group
+            loc = infile
+        elif group in infile:
+            # We have a group name and it exists in the file
+            loc = infile[group]
+        else:
+            # The specified group does not exist in this file
+            loc = None
+
         # Loop over datasets to read
         for name in datasets:
 
             # Find the dataset
-            loc = infile if group is None else infile[group]
-            if name not in loc:
+            if loc is None or name not in loc:
                 # Dataset doesn't exist in this file
                 data[name] = None
+                if return_file_nr is not None and name in return_file_nr:
+                    file_nr[name] = None
             else:
                 # Dataset exists, so do a collective read
                 data[name] = collective_read(loc[name], comm)
-
-            # Store file number
-            if file_nr is not None:
-                n = data[name].shape[0]
-                file_nr[name] = np.ones(n, dtype=int)*self.all_file_indexes[self.collective_file_nr]
-
+                if return_file_nr is not None and name in return_file_nr:
+                    n = data[name].shape[0]                    
+                    file_nr[name] = np.ones(n, dtype=int)*self.all_file_indexes[self.collective_file_nr]
+                    
         infile.close()
         comm.Free()
 
@@ -358,8 +386,11 @@ class MultiFile:
         
     def read(self, datasets, group=None, return_file_nr=None):
         """
-        Read and concatenate arrays from a set of one or more
-        files, using independent or collective I/O as appropriate.
+        Read and concatenate arrays from a set of one or more files, using
+        independent or collective I/O as appropriate.
+
+        Missing datasets are silently skipped. Returns None for datasets where
+        no elements are read.
         """
 
         if self.collective:
