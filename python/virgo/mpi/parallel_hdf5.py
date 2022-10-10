@@ -431,9 +431,15 @@ class MultiFile:
             # Collective I/O: groups of ranks read a file each
             comm = self.comm.Split(self.collective_file_nr, self.rank_in_file)
             filename = self.filenames[self.collective_file_nr]
-            infile = h5py.File(filename, "r", driver="mpio", comm=comm)
-            loc = infile if group is None else infile[group]
-            if name in loc:
+            infile = h5py.File(filename, "r", driver="mpio", comm=comm)            
+            # Determine group to read from
+            if group is None:
+                loc = infile
+            elif group in infile:
+                loc = infile[group]
+            else:
+                loc = None
+            if loc is not None and name in loc:
                 ntot = loc[name].shape[0]
                 comm_size = comm.Get_size()
                 comm_rank = comm.Get_rank()
@@ -453,8 +459,13 @@ class MultiFile:
             for i in range(first, first+num):
                 filename = self.filenames[i]
                 with h5py.File(filename, "r") as infile:
-                    loc = infile if group is None else infile[group]
-                    if name in loc:
+                    if group is None:
+                        loc = infile
+                    elif group in infile:
+                        loc = infile[group]
+                    else:
+                        loc = None
+                    if loc is not None and name in loc:
                         elements_per_file[self.all_file_indexes[i]] = loc[name].shape[0]
                     else:
                         elements_per_file[self.all_file_indexes[i]] = 0
