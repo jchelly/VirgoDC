@@ -403,7 +403,7 @@ def test_multi_file_one_file_per_rank_group(tmp_path):
         do_multi_file_test(tmp_path, basename="file_per_rank_group", nr_files=comm_size, elements_per_file=n,
                            group="group")
 
-def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename, have_missing=False):
+def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename, have_missing=False, group=None):
     """
     Check that writing out a distributed array to a file set
     then reading it back in preserves the values.
@@ -417,7 +417,7 @@ def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename, have_
     tmp_path = comm.bcast(tmp_path)
 
     # Create the data to read/write
-    create_multi_file_output(tmp_path, basename, nr_files, elements_per_file, have_missing=have_missing)
+    create_multi_file_output(tmp_path, basename, nr_files, elements_per_file, have_missing=have_missing, group=group)
     comm.barrier()
 
     # Make format string for the file names
@@ -425,12 +425,12 @@ def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename, have_
 
     # Read the data using the MultiFile class
     mf = phdf5.MultiFile(filenames1, file_nr_attr=("Header", "nr_files"), comm=comm)
-    data = mf.read(("data",))["data"]
+    data = mf.read(("data",), group=group)["data"]
 
     # Write the same data to a new set of files
-    elements_per_file = mf.get_elements_per_file("data")
+    elements_per_file = mf.get_elements_per_file("data", group=group)
     filenames2 = str(tmp_path / f"{basename}.mf_write_test.%(file_nr)d.hdf5")
-    mf.write({"data" : data}, elements_per_file, filenames2, "w", )
+    mf.write({"data" : data}, elements_per_file, filenames2, "w", group=group)
 
     comm.barrier()
 
@@ -440,14 +440,24 @@ def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename, have_
         for file_nr in range(nr_files):
             filename1 = filenames1 % {"file_nr" : file_nr}
             with h5py.File(filename1, "r") as infile:
-                if "data" in infile:
-                    arr1 = infile["data"][...]
+                # Find group to read from (it may not exist)
+                if group is None:
+                    loc = infile
+                elif group in infile:
+                    loc = infile[group]
+                else:
+                    loc = None
+                # Read dataset if possible
+                if loc is not None and "data" in loc:
+                    arr1 = loc["data"][...]
                 else:
                     arr1 = ()
+            # MultiFile.write() should always create a dataset, even if zero sized
             filename2 = filenames2 % {"file_nr" : file_nr}
             with h5py.File(filename2, "r") as infile:
-                if "data" in infile:
-                    arr2 = infile["data"][...]
+                loc = infile if group is None else infile[group]
+                if "data" in loc:
+                    arr2 = loc["data"][...]
                 else:
                     arr2 = ()
             # The arrays should be identical
@@ -498,6 +508,21 @@ def test_round_trip_few_files_missing(tmp_path):
                           basename="round_trip_few_files_missing", have_missing=True)
 
 @pytest.mark.mpi
+def test_round_trip_few_files_missing_group(tmp_path):
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_size = comm.Get_size()
+
+    nr_files = max(1, (comm_size // 2))
+    if nr_files <= 1:
+        pytest.skip("Need >3 MPI ranks for this test")
+
+    multi_file_round_trip(tmp_path, nr_files=nr_files, elements_per_file=10000,
+                          basename="round_trip_few_files_missing_group",
+                          have_missing=True, group="group")
+
+@pytest.mark.mpi
 def test_round_trip_many_files(tmp_path):
 
     from mpi4py import MPI
@@ -518,4 +543,16 @@ def test_round_trip_many_files_missing(tmp_path):
     nr_files = comm_size * 2
     multi_file_round_trip(tmp_path, nr_files=nr_files, elements_per_file=10000,
                           basename="round_trip_many_files_missing", have_missing=True)
+
+@pytest.mark.mpi
+def test_round_trip_many_files_missing_group(tmp_path):
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_size = comm.Get_size()
+
+    nr_files = comm_size * 2
+    multi_file_round_trip(tmp_path, nr_files=nr_files, elements_per_file=10000,
+                          basename="round_trip_many_files_missing_group",
+                          have_missing=True, group="group")
 
