@@ -308,10 +308,10 @@ new dataset will be created. Otherwise, it is assumed that a dataset with
 suitable type and dimensions already exists.
 
 Multidimensional arrays are assumed to be distributed between MPI ranks along
-the first axis.
+the first axis. Writes are chunked if necessary to avoid problems with the
+underlying MPI library failing to handle writes of >2GB.
 
-Writes are chunked if necessary to avoid problems with the underlying MPI
-library failing to handle writes of >2GB.
+Returns the new (or modified) h5py.Dataset object.
 
 #### Multi-file Parallel I/O
 

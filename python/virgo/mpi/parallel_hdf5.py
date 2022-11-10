@@ -177,6 +177,8 @@ def collective_write(group, name, data, comm, chunk_size=None, create_dataset=Tr
         memory_offset += nr_to_write
         nr_left       -= nr_to_write
 
+    return dataset
+
 
 def assign_files(nr_files, nr_ranks):
     """
