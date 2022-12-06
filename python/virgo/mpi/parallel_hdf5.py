@@ -531,10 +531,10 @@ class MultiFile:
             length = elements_per_file[self.all_file_indexes[self.collective_file_nr]]
             assert length == data[name].shape[0]
             length_tot = comm.allreduce(length)
-            collective_write(loc, name, data[name], comm)
+            dataset = collective_write(loc, name, data[name], comm)
             if attrs is not None and name in attrs:
                 for attr_name, attr_val in attrs[name].items():
-                    loc[name].attrs[attr_name] = attr_val
+                    dataset.attrs[attr_name] = attr_val
          
         outfile.close()
         comm.Free()
