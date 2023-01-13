@@ -353,7 +353,7 @@ specified.
 
 ```
 virgo.mpi.parallel_hdf5.MultiFile.read(self, datasets, group=None,
-    return_file_nr=None)
+    return_file_nr=None, read_attributes=False)
 ```
 This method reads multiple distributed arrays from the file set. The arrays
 are distributed between MPI ranks along the first axis. The parameters are:
@@ -361,6 +361,9 @@ are distributed between MPI ranks along the first axis. The parameters are:
   * `group` - the name of the HDF5 group to read datasets from
   * `return_file_nr` - if this is true the output dict contains an extra
     array with the index of the file each element was read from.
+  * `read_attributes` - if this is true, return an ndarray subclass with a
+    .attrs attribute, which is a dict containing all HDF5 attributes of the
+    dataset in the file. Attributes are assumed to be the same between files.
 
 Returns a dict containing distributed arrays with one element for each
 name in `datasets`. Input datasets should all have the same number of elements
