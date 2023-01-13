@@ -181,7 +181,7 @@ def test_collective_write_small_chunks_2d(tmp_path):
         do_collective_write(tmp_path, (max_local_size,3), chunk_size=256)
 
 def create_multi_file_output(tmp_path, basename, nr_files, elements_per_file,
-                             group=None, have_missing=False):
+                             group=None, have_missing=False, attrs=None):
     """
     Write an array distributed over multiple files
     """
@@ -222,15 +222,22 @@ def create_multi_file_output(tmp_path, basename, nr_files, elements_per_file,
                     if group is not None:
                         outfile.create_group(group)
                         outfile[group]["data"] = arr
+                        if attrs is not None:
+                            for name in attrs:
+                                outfile[group]["data"].attrs[name] = attrs[name]
                     else:
                         outfile["data"] = arr
+                        if attrs is not None:
+                            for name in attrs:
+                                outfile["data"].attrs[name] = attrs[name]
+ 
                 outfile["nr_files"] = nr_files
                 h = outfile.create_group("Header")
                 h.attrs["nr_files"] = nr_files
 
     comm.barrier()
 
-def read_multi_file_output(tmp_path, basename, group=None):
+def read_multi_file_output(tmp_path, basename, group=None, attrs=None):
     """
     Do a parallel read of a multi file output then gather the results on rank
     zero and check against a serial read.
@@ -244,13 +251,25 @@ def read_multi_file_output(tmp_path, basename, group=None):
     # Make format string for the file names
     filenames = str(tmp_path / f"{basename}.%(file_nr)d.hdf5")
 
+    # Check whether we shoudl read attributes
+    read_attributes = True if attrs is not None else False
+
     # Read the data using the MultiFile class
     mf = phdf5.MultiFile(filenames, file_nr_attr=("Header", "nr_files"), comm=comm)
     if group is None:
-        arr = mf.read(("data",))["data"]
+        arr = mf.read(("data",), read_attributes=read_attributes)["data"]
     else:
-        arr = mf.read(("data",), group=group)["data"]
+        arr = mf.read(("data",), group=group, read_attributes=read_attributes)["data"]
     
+    # Check that the array returned has the expected attributes
+    all_ok = True
+    if attrs is not None:
+        for name in attrs:
+            if arr.attrs[name] != attrs[name]:
+                all_ok = False
+        all_ok = comm.allreduce(all_ok, op=MPI.LAND)
+        assert all_ok, "Array read back does not have correct attributes!"
+
     # Gather array on rank zero
     arr = comm.allgather(arr)
     if comm_rank == 0:
@@ -291,9 +310,19 @@ def do_multi_file_test(tmp_path, basename, nr_files, elements_per_file, group=No
     comm = MPI.COMM_WORLD
     tmp_path = comm.bcast(tmp_path) # Use same path on all ranks
 
+    # Run test without attribues
     create_multi_file_output(tmp_path, basename, nr_files, elements_per_file, group=group,
-                             have_missing=have_missing)
-    read_multi_file_output(tmp_path, basename, group=group)
+                             have_missing=have_missing, attrs=None)
+    read_multi_file_output(tmp_path, basename, group=group, attrs=None)
+
+    # Repeat test with attributes
+    attrs = {
+        "attribute1" : 1,
+        "attribute2" : 2,
+    }
+    create_multi_file_output(tmp_path, basename, nr_files, elements_per_file, group=group,
+                             have_missing=have_missing, attrs=attrs)
+    read_multi_file_output(tmp_path, basename, group=group, attrs=attrs)
 
 @pytest.mark.mpi
 def test_multi_file_single_file(tmp_path):

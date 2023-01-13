@@ -7,6 +7,21 @@ import virgo.mpi.util
 # This is to avoid MPI issues with buffers >2GB.
 CHUNK_SIZE=100*1024*1024
 
+
+class AttributeArray(np.ndarray):
+    """
+    A numpy ndarray with HDF5 attributes attached
+    """
+    def __new__(cls, input_array, attrs=None):
+        obj = np.asarray(input_array).view(cls)
+        obj.attrs = attrs
+        return obj
+
+    def __array_finalize__(self, obj):
+        if obj is None: return
+        self.attrs = getattr(obj, 'attrs', None)
+
+
 def collective_read(dataset, comm, chunk_size=None):
     """
     Do a parallel collective read of a HDF5 dataset by splitting
@@ -266,7 +281,7 @@ class MultiFile:
                     break
             assert self.collective_file_nr is not None
             
-    def _read_independent(self, datasets, group=None, return_file_nr=None):
+    def _read_independent(self, datasets, group=None, return_file_nr=None, read_attributes=False):
         """
         Read and concatenate arrays from multiple files,
         assuming at least one file per MPI rank.
@@ -305,7 +320,19 @@ class MultiFile:
                 if loc is not None:
                     for name in data:
                         if name in loc:
-                            data[name].append(loc[name][...])
+
+                            # Read the data
+                            dataset = loc[name]
+                            data[name].append(dataset[...])
+
+                            # Read and store attributes if necessary
+                            if read_attributes:
+                                attrs = {}
+                                for attr_name in dataset.attrs:
+                                    attrs[attr_name] = dataset.attrs[attr_name]
+                                data[name][-1] = AttributeArray(data[name][-1], attrs=attrs)
+
+                            # Store file number if requested
                             if file_nr is not None and name in file_nr:
                                 n = data[name][-1].shape[0]
                                 file_nr[name].append(np.ones(n, dtype=int)*self.all_file_indexes[i])
@@ -313,7 +340,11 @@ class MultiFile:
         # Combine data from different files
         for name in data:
             if len(data[name]) > 0:
+                if read_attributes:
+                    attrs = data[name][0].attrs
                 data[name] = np.concatenate(data[name])
+                if read_attributes:
+                    data[name] = AttributeArray(data[name], attrs=attrs)
             else:
                 data[name] = None
 
@@ -327,7 +358,7 @@ class MultiFile:
 
         return data, file_nr
 
-    def _read_collective(self, datasets, group=None, return_file_nr=None):
+    def _read_collective(self, datasets, group=None, return_file_nr=None, read_attributes=False):
         """
         Read and concatenate arrays from multiple files,
         assuming more MPI ranks than files so each rank
@@ -376,7 +407,17 @@ class MultiFile:
                     file_nr[name] = None
             else:
                 # Dataset exists, so do a collective read
-                data[name] = collective_read(loc[name], comm)
+                dataset = loc[name]
+                data[name] = collective_read(dataset, comm)
+
+                # Read and store attributes if necessary
+                if read_attributes:
+                    attrs = {}
+                    for attr_name in dataset.attrs:
+                        attrs[attr_name] = dataset.attrs[attr_name]
+                    data[name] = AttributeArray(data[name], attrs=attrs)
+
+                # Store file number if needed
                 if return_file_nr is not None and name in return_file_nr:
                     n = data[name].shape[0]                    
                     file_nr[name] = np.ones(n, dtype=int)*self.all_file_indexes[self.collective_file_nr]
@@ -386,7 +427,7 @@ class MultiFile:
 
         return data, file_nr
         
-    def read(self, datasets, group=None, return_file_nr=None):
+    def read(self, datasets, group=None, return_file_nr=None, read_attributes=False):
         """
         Read and concatenate arrays from a set of one or more files, using
         independent or collective I/O as appropriate.
@@ -396,9 +437,9 @@ class MultiFile:
         """
 
         if self.collective:
-            data, file_nr = self._read_collective(datasets, group, return_file_nr)
+            data, file_nr = self._read_collective(datasets, group, return_file_nr, read_attributes)
         else:
-            data, file_nr = self._read_independent(datasets, group, return_file_nr)
+            data, file_nr = self._read_independent(datasets, group, return_file_nr, read_attributes)
 
         # Ensure native endian data: mpi4py doesn't like arrays tagged as big or
         # little endian rather than native.
@@ -413,6 +454,21 @@ class MultiFile:
         if file_nr is not None:
             for name in file_nr:
                 file_nr[name] = virgo.mpi.util.replace_none_with_zero_size(file_nr[name], self.comm)
+
+        # Attributes may now be missing from any zero size arrays we created
+        if read_attributes:
+            for name in data:
+                if data[name] is not None:
+                    if hasattr(data[name], "attrs"):
+                        array_attrs = data[name].attrs
+                    else:
+                        array_attrs = None
+                    array_attrs_all_ranks = self.comm.allgather(array_attrs)
+                    if not(hasattr(data[name], "attrs")):
+                        for array_attrs in array_attrs_all_ranks:
+                            if array_attrs is not None:
+                                data[name] = AttributeArray(data[name], attrs=array_attrs)
+                                break
 
         if return_file_nr is None:
             return data
