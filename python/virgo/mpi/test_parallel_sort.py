@@ -65,6 +65,11 @@ def run_parallel_sort(input_function, nr_tests):
         arr_ps_from_index = psort.fetch_elements(arr, index)
         assert_all_ranks(np.all(arr_ps_from_index == arr_ps), "Index does not reproduce sorted array!")
 
+        # Check that this also works if we use the result parameter of fetch_elements to rearrange an array in place
+        arr_ps_from_index = arr.copy()
+        psort.fetch_elements(arr_ps_from_index, index, result=arr_ps_from_index)
+        assert_all_ranks(np.all(arr_ps_from_index == arr_ps), "Index does not reproduce sorted array when result is updated in place!")
+
 @pytest.mark.mpi
 def test_parallel_sort_random_integers():
 
