@@ -547,7 +547,7 @@ class MultiFile:
 
         return elements_per_file
 
-    def _write_independent(self, data, elements_per_file, filenames, mode, group=None, attrs=None):
+    def _write_independent(self, data, elements_per_file, all_filenames, mode, group=None, attrs=None):
         """
         Write arrays to multiple files, assuming at least one file per MPI rank.
         """
@@ -561,7 +561,7 @@ class MultiFile:
 
         offset = 0
         for i in range(first, first+num):
-            filename = filenames % {"file_nr" : self.all_file_indexes[i]}
+            filename = all_filenames[i]
             with h5py.File(filename, mode) as outfile:
                 
                 # Ensure the group exists
@@ -580,7 +580,7 @@ class MultiFile:
 
                 offset += length
 
-    def _write_collective(self, data, elements_per_file, filenames, mode, group=None, attrs=None):
+    def _write_collective(self, data, elements_per_file, all_filenames, mode, group=None, attrs=None):
         """
         Write arrays to multiple files in collective mode.
         """
@@ -590,7 +590,7 @@ class MultiFile:
         comm = self.comm.Split(self.collective_file_nr, self.rank_in_file)
 
         # Open the file
-        filename = filenames % {"file_nr" : self.all_file_indexes[self.collective_file_nr]}
+        filename = all_filenames[self.collective_file_nr]
         outfile = h5py.File(filename, mode, driver="mpio", comm=comm)
 
         # Ensure the group exists
@@ -619,10 +619,23 @@ class MultiFile:
         files or modify existing files.
         """
 
+        # Determine if we have a list of filenames or a single format string
+        if isinstance(filenames, str):
+            # filenames is a format string. Substitute in the file indexes.
+            all_filenames = [filenames % {"file_nr" : i} for i in self.all_file_indexes]
+        elif isinstance(filenames, collections.abc.Sequence):
+            # filenames is a list of filenames
+            all_filenames = [str(fn) for fn in filenames]
+            # Must have the same number of output files as input files
+            if len(all_filenames) != len(self.all_file_indexes):
+                raise ValueError("wrong number of filenames provided")
+        else:
+            raise ValueError("filenames must be string or sequence of strings")
+
         if self.collective:
             # Collective mode
-            self._write_collective(data, elements_per_file, filenames, mode, group, attrs)
+            self._write_collective(data, elements_per_file, all_filenames, mode, group, attrs)
         else:
             # Independent mode
-            self._write_independent(data, elements_per_file, filenames, mode, group, attrs)
+            self._write_independent(data, elements_per_file, all_filenames, mode, group, attrs)
             
