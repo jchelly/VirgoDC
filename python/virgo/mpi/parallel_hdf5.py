@@ -1,5 +1,7 @@
 #!/bin/env python
 
+import collections
+
 import numpy as np
 import virgo.mpi.util
 
@@ -217,7 +219,9 @@ class MultiFile:
     N and M.
 
     filenames - a format string to generate the names of files in the set.
-                File number is subbed in as `filenames % {"file_nr" : file_nr}`
+                File number is subbed in as `filenames % {"file_nr" : file_nr}`.
+                Alternatively, filenames may be a sequence of strings with
+                the names of all files in the set.
     file_nr_attr - a tuple with (HDF5 object name, attribute name) which
                 specifies a HDF5 attribute containing the number of files in the set.
                 E.g. in a Gadget snapshot use `file_nr_attr=("Header","NumFilesPerSnapshot")`.
@@ -238,29 +242,42 @@ class MultiFile:
         comm_rank = comm.Get_rank()
         comm_size = comm.Get_size()
 
-        # Determine file indexes
-        if file_idx is None:
-            if comm_rank == 0:
-                filename = filenames % {"file_nr":0}
-                with h5py.File(filename, "r") as infile:
-                    if file_nr_attr is not None:
-                        obj, attr = file_nr_attr
-                        nr_files = int(infile[obj].attrs[attr])
-                        file_idx = np.arange(nr_files)
-                    elif file_nr_dataset is not None:
-                        nr_files = int(infile[file_nr_dataset][...])
-                        file_idx = np.arange(nr_files)
-                    else:
-                        raise Exception("Must specify one of file_nr_attr, file_nr_dataset, file_idx")
-            else:
-                file_idx = None
-            file_idx = comm.bcast(file_idx)
+        # Determine file names and number of files
+        if isinstance(filenames, str):
+            
+            # Filenames is a format string. Need to determine number of files.
+            if file_idx is None:
+                # File indexes not specified, so read number of files from the first file
+                if comm_rank == 0:
+                    filename = filenames % {"file_nr":0}
+                    with h5py.File(filename, "r") as infile:
+                        if file_nr_attr is not None:
+                            obj, attr = file_nr_attr
+                            nr_files = int(infile[obj].attrs[attr])
+                            file_idx = np.arange(nr_files)
+                        elif file_nr_dataset is not None:
+                            nr_files = int(infile[file_nr_dataset][...])
+                            file_idx = np.arange(nr_files)
+                        else:
+                            raise Exception("Must specify one of file_nr_attr, file_nr_dataset, file_idx")
+                else:
+                    file_idx = None
+                file_idx = comm.bcast(file_idx)
+            self.filenames = [filenames % {"file_nr":i} for i in file_idx]
+            self.all_file_indexes = file_idx
 
-        # Full list of filenames to read
-        self.filenames = [filenames % {"file_nr":i} for i in file_idx]
-        self.all_file_indexes = file_idx
+        elif isinstance(filenames, collections.abc.Sequence):
+
+            # Filenames is not a single format string, so interpret as sequence of filenames
+            self.filenames = [str(s) for s in filenames]
+            nr_files = len(self.filenames)
+            self.all_file_indexes = np.arange(nr_files, dtype=int)
+
+        else:
+            # Don't know what filenames is in this case!
+            raise ValueError("filenames must be string or sequence of strings")
+
         num_files = len(self.filenames)
-
         if num_files >= comm_size:
             # More files than ranks, so assign files to ranks
             self.collective = False
