@@ -234,6 +234,7 @@ def create_multi_file_output(tmp_path, basename, nr_files, elements_per_file,
                 outfile["nr_files"] = nr_files
                 h = outfile.create_group("Header")
                 h.attrs["nr_files"] = nr_files
+                h["nr_files"] = nr_files
 
     comm.barrier()
 
@@ -432,7 +433,8 @@ def test_multi_file_one_file_per_rank_group(tmp_path):
         do_multi_file_test(tmp_path, basename="file_per_rank_group", nr_files=comm_size, elements_per_file=n,
                            group="group")
 
-def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename, have_missing=False, group=None):
+def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename, have_missing=False, group=None,
+                          filename_method="attribute"):
     """
     Check that writing out a distributed array to a file set
     then reading it back in preserves the values.
@@ -453,13 +455,25 @@ def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename, have_
     filenames1 = str(tmp_path / f"{basename}.%(file_nr)d.hdf5")
 
     # Read the data using the MultiFile class
-    mf = phdf5.MultiFile(filenames1, file_nr_attr=("Header", "nr_files"), comm=comm)
+    if filename_method == "attribute":
+        mf = phdf5.MultiFile(filenames1, file_nr_attr=("Header", "nr_files"), comm=comm)
+    elif filename_method == "dataset":
+        mf = phdf5.MultiFile(filenames1, file_nr_dataset="Header/nr_files", comm=comm)
+    elif filename_method == "list":
+        all_filenames = [filenames1 % {"file_nr" : i} for i in range(nr_files)]
+        mf = phdf5.MultiFile(all_filenames, comm=comm)
+    else:
+        raise ValueError("Unrecognized filename_method!")
     data = mf.read(("data",), group=group)["data"]
 
     # Write the same data to a new set of files
     elements_per_file = mf.get_elements_per_file("data", group=group)
     filenames2 = str(tmp_path / f"{basename}.mf_write_test.%(file_nr)d.hdf5")
-    mf.write({"data" : data}, elements_per_file, filenames2, "w", group=group)
+    if filename_method != "list":
+        mf.write({"data" : data}, elements_per_file, filenames2, "w", group=group)
+    else:
+        all_filenames = [filenames2 % {"file_nr" : i} for i in range(nr_files)]
+        mf.write({"data" : data}, elements_per_file, all_filenames, "w", group=group)
 
     comm.barrier()
 
@@ -496,9 +510,17 @@ def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename, have_
     equal = comm.bcast(equal)
     assert equal, "Array written to file set did not round trip"
 
+def multi_file_round_trip_all_methods(tmp_path, nr_files, elements_per_file, basename, have_missing=False, group=None):
+    """
+    Run multi file round trip test with different methods for generating filenames
+    """
+    for filename_method in ("dataset", "attribute", "list"):
+        multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename+"_"+filename_method,
+                              have_missing, group, filename_method=filename_method)
+
 @pytest.mark.mpi
 def test_round_trip_single_file(tmp_path):
-    multi_file_round_trip(tmp_path, nr_files=1, elements_per_file=10000,
+    multi_file_round_trip_all_methods(tmp_path, nr_files=1, elements_per_file=10000,
                           basename="round_trip_single_file")
 
 @pytest.mark.mpi
@@ -508,8 +530,8 @@ def test_round_trip_file_per_rank(tmp_path):
     comm = MPI.COMM_WORLD
     comm_size = comm.Get_size()
 
-    multi_file_round_trip(tmp_path, nr_files=comm_size, elements_per_file=10000,
-                          basename="round_trip_file_per_rank")
+    multi_file_round_trip_all_methods(tmp_path, nr_files=comm_size, elements_per_file=10000,
+                                      basename="round_trip_file_per_rank")
 
 @pytest.mark.mpi
 def test_round_trip_few_files(tmp_path):
@@ -519,8 +541,8 @@ def test_round_trip_few_files(tmp_path):
     comm_size = comm.Get_size()
 
     nr_files = max(1, (comm_size // 2))
-    multi_file_round_trip(tmp_path, nr_files=nr_files, elements_per_file=10000,
-                          basename="round_trip_few_files")
+    multi_file_round_trip_all_methods(tmp_path, nr_files=nr_files, elements_per_file=10000,
+                                      basename="round_trip_few_files")
 
 @pytest.mark.mpi
 def test_round_trip_few_files_missing(tmp_path):
@@ -533,8 +555,8 @@ def test_round_trip_few_files_missing(tmp_path):
     if nr_files <= 1:
         pytest.skip("Need >3 MPI ranks for this test")
 
-    multi_file_round_trip(tmp_path, nr_files=nr_files, elements_per_file=10000,
-                          basename="round_trip_few_files_missing", have_missing=True)
+    multi_file_round_trip_all_methods(tmp_path, nr_files=nr_files, elements_per_file=10000,
+                                      basename="round_trip_few_files_missing", have_missing=True)
 
 @pytest.mark.mpi
 def test_round_trip_few_files_missing_group(tmp_path):
@@ -547,9 +569,9 @@ def test_round_trip_few_files_missing_group(tmp_path):
     if nr_files <= 1:
         pytest.skip("Need >3 MPI ranks for this test")
 
-    multi_file_round_trip(tmp_path, nr_files=nr_files, elements_per_file=10000,
-                          basename="round_trip_few_files_missing_group",
-                          have_missing=True, group="group")
+    multi_file_round_trip_all_methods(tmp_path, nr_files=nr_files, elements_per_file=10000,
+                                      basename="round_trip_few_files_missing_group",
+                                      have_missing=True, group="group")
 
 @pytest.mark.mpi
 def test_round_trip_many_files(tmp_path):
@@ -559,8 +581,8 @@ def test_round_trip_many_files(tmp_path):
     comm_size = comm.Get_size()
 
     nr_files = comm_size * 2
-    multi_file_round_trip(tmp_path, nr_files=nr_files, elements_per_file=10000,
-                          basename="round_trip_many_files")
+    multi_file_round_trip_all_methods(tmp_path, nr_files=nr_files, elements_per_file=10000,
+                                      basename="round_trip_many_files")
 
 @pytest.mark.mpi
 def test_round_trip_many_files_missing(tmp_path):
@@ -570,8 +592,8 @@ def test_round_trip_many_files_missing(tmp_path):
     comm_size = comm.Get_size()
 
     nr_files = comm_size * 2
-    multi_file_round_trip(tmp_path, nr_files=nr_files, elements_per_file=10000,
-                          basename="round_trip_many_files_missing", have_missing=True)
+    multi_file_round_trip_all_methods(tmp_path, nr_files=nr_files, elements_per_file=10000,
+                                      basename="round_trip_many_files_missing", have_missing=True)
 
 @pytest.mark.mpi
 def test_round_trip_many_files_missing_group(tmp_path):
@@ -581,7 +603,7 @@ def test_round_trip_many_files_missing_group(tmp_path):
     comm_size = comm.Get_size()
 
     nr_files = comm_size * 2
-    multi_file_round_trip(tmp_path, nr_files=nr_files, elements_per_file=10000,
-                          basename="round_trip_many_files_missing_group",
-                          have_missing=True, group="group")
+    multi_file_round_trip_all_methods(tmp_path, nr_files=nr_files, elements_per_file=10000,
+                                      basename="round_trip_many_files_missing_group",
+                                      have_missing=True, group="group")
 
