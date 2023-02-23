@@ -451,7 +451,18 @@ class MultiFile:
 
         Missing datasets are silently skipped. Returns None for datasets where
         no elements are read.
+
+        If datasets is a sequence of strings, returns a dict where the keys are
+        the dataset names and the values are numpy arrays. If datasets is a string,
+        we read just that dataset and return a numpy array.
         """
+
+        # Check for the case where only one dataset is specified as a string
+        if isinstance(datasets, str):
+            datasets = (datasets,)
+            single_dataset = True
+        else:
+            single_dataset = False
 
         if self.collective:
             data, file_nr = self._read_collective(datasets, group, return_file_nr, read_attributes)
@@ -486,6 +497,12 @@ class MultiFile:
                             if array_attrs is not None:
                                 data[name] = AttributeArray(data[name], attrs=array_attrs)
                                 break
+
+        # If we were given a single dataset name as a string (i.e. not a dict of names),
+        # return arrays rather than dicts of arrays
+        if single_dataset:
+            data = data[datasets[0]]
+            file_nr = file_nr[datasets[0]]
 
         if return_file_nr is None:
             return data
