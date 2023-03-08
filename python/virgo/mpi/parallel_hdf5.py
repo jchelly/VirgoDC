@@ -502,7 +502,8 @@ class MultiFile:
         # return arrays rather than dicts of arrays
         if single_dataset:
             data = data[datasets[0]]
-            file_nr = file_nr[datasets[0]]
+            if file_nr is not None:
+                file_nr = file_nr[datasets[0]]
 
         if return_file_nr is None:
             return data
