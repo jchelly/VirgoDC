@@ -336,8 +336,9 @@ The approach is as follows:
     groups and each group does collective I/O on one file
 
 The class takes the following parameters:
-  * `filenames` - a format string to generate the names of files in the set.
-    The file number is substituted in as `filenames % {"file_nr" : file_nr}`
+  * `filenames` - a format string to generate the names of files in the set,
+    or a list of strings with the file names. If a format string the file
+    number is substituted in as `filenames % {"file_nr" : file_nr}`
   * `file_nr_attr` - a tuple with (HDF5 object name, attribute name) which
     specifies a HDF5 attribute containing the number of files in the set.
     E.g. in a Gadget snapshot use
@@ -347,7 +348,7 @@ The class takes the following parameters:
   * `file_idx` - an array with the indexes of the files in the set
 
 Exactly one of `file_nr_attr`, `file_nr_dataset` and `file_idx` must be
-specified.
+specified if `filenames` is not a list of strings.
 
 ##### Reading datasets from a file set
 
@@ -355,22 +356,41 @@ specified.
 virgo.mpi.parallel_hdf5.MultiFile.read(self, datasets, group=None,
     return_file_nr=None, read_attributes=False)
 ```
-This method reads multiple distributed arrays from the file set. The arrays
+This method reads one or more distributed arrays from the file set. The arrays
 are distributed between MPI ranks along the first axis. The parameters are:
-  * `datasets` - a list of the names of the datasets to read
+  * `datasets` - a list of the names of the datasets to read, or a string
+     specifying a single dataset to read
   * `group` - the name of the HDF5 group to read datasets from
-  * `return_file_nr` - if this is true the output dict contains an extra
-    array with the index of the file each element was read from.
+  * `return_file_nr` - if this is true an additional set of arrays is returned
+     which contain the index of the file each dataset element was read from.
   * `read_attributes` - if this is true, return an ndarray subclass with a
     .attrs attribute, which is a dict containing all HDF5 attributes of the
     dataset in the file. Attributes are assumed to be the same between files.
+  * `unpack` - if True, results that would be returned as dicts are returned
+     as lists instead.
 
-Returns a dict containing distributed arrays with one element for each
-name in `datasets`. Input datasets should all have the same number of elements
-per file.
+This reads the specified datasets and for each one returns a distributed array
+with the data. The arrays are returned in one of three ways:
+
+  * If `datasets` is a single string then a single array is returned
+  * If `datasets` is a list of strings and unpack=False, returns a dict where
+    the keys are dataset names and the values are numpy arrays with the data
+  * If `datasets` is a list of strings and unpack=True, returns a list of
+    numpy arrays
 
 This can be used to read particles from a snapshot distributed over an
 arbitrary number of files, for example.
+
+The unpack option is useful for avoiding repetition of the dataset names. E.g.
+```
+data = mf.read(("Positions", "Velocities"))
+pos = data["Positions"]
+vel = data["Velocities"]
+```
+can be reduced to
+```
+pos, vel = mf.read(("Positions", "Velocities"), unpack=True)
+```
 
 ##### Reading the number of dataset elements per file
 
@@ -483,3 +503,15 @@ The array should have the same dtype on all ranks where it is not None.
 The intended use of this function is to allow read routines to return None
 where datasets do not exist and then this function can be used to retrieve the
 missing metadata.
+
+#### MPI argument parser
+
+virgo.mpi.util.MPIArgumentParser is a subclass of argparse.ArgumentParser for
+use in MPI programs. It parses arguments on rank 0 of the supplied communicator
+and broadcasts them to the rest of the communicator. In the event of an error
+it prints a message to rank 0's stderr, calls MPI_Finalize, and terminates
+all processes.
+
+It takes the communicator to use as its first argument. This should usually be
+mpi4py.MPI.COMM_WORLD. Any other parameters are passed to
+argparse.ArgumentParser.
