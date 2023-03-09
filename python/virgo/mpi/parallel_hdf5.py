@@ -444,7 +444,7 @@ class MultiFile:
 
         return data, file_nr
         
-    def read(self, datasets, group=None, return_file_nr=None, read_attributes=False):
+    def read(self, datasets, group=None, return_file_nr=None, read_attributes=False, unpack=False):
         """
         Read and concatenate arrays from a set of one or more files, using
         independent or collective I/O as appropriate.
@@ -454,7 +454,12 @@ class MultiFile:
 
         If datasets is a sequence of strings, returns a dict where the keys are
         the dataset names and the values are numpy arrays. If datasets is a string,
-        we read just that dataset and return a numpy array.
+        we read just that dataset and return a numpy array.        
+
+        If unpack=True the results are returned lists rather than dicts. This can
+        be used to assign the output arrays directly. E.g.
+
+        pos, vel = mf.read(("Positions", "Velocities"), unpack=True)
         """
 
         # Check for the case where only one dataset is specified as a string
@@ -498,12 +503,17 @@ class MultiFile:
                                 data[name] = AttributeArray(data[name], attrs=array_attrs)
                                 break
 
-        # If we were given a single dataset name as a string (i.e. not a dict of names),
-        # return arrays rather than dicts of arrays
         if single_dataset:
+            # If we were given a single string instead of a list of names,
+            # just return a single array instead of a list of arrays.
             data = data[datasets[0]]
             if file_nr is not None:
                 file_nr = file_nr[datasets[0]]
+        elif unpack=True:
+            # Return lists rather than dicts of arrays if unpack=True
+            data = [data[name] for name in datasets]
+            if file_nr is not None:
+                file_nr = [file_nr[name] for name in datasets]
 
         if return_file_nr is None:
             return data
