@@ -509,7 +509,7 @@ class MultiFile:
             data = data[datasets[0]]
             if file_nr is not None:
                 file_nr = file_nr[datasets[0]]
-        elif unpack=True:
+        elif unpack==True:
             # Return lists rather than dicts of arrays if unpack=True
             data = [data[name] for name in datasets]
             if file_nr is not None:
