@@ -320,54 +320,76 @@ def find_splitting_points(arr, r, comm=None):
     done = np.zeros(nranks, dtype=bool)
 
     local_median = np.zeros(nranks, dtype=arr.dtype)
-    weight       = np.zeros(nranks, dtype=float)
-    est_median   = np.zeros(nranks, dtype=arr.dtype)
+    local_weight = np.zeros(nranks, dtype=float)
+    est_median   = np.zeros(max(nranks, comm_size), dtype=arr.dtype)
 
     # Arrays with result
     res_median   = np.zeros(nranks, dtype=arr.dtype)
     res_min_rank = np.zeros(nranks, dtype=index_dtype)
     res_max_rank = np.zeros(nranks, dtype=index_dtype)
 
+    # Send/recv buffers
+    send_median = np.zeros(comm_size, dtype=local_median.dtype)
+    send_weight = np.zeros(comm_size, dtype=local_weight.dtype)
+    recv_median = np.zeros(comm_size, dtype=local_median.dtype)
+    recv_weight = np.zeros(comm_size, dtype=local_weight.dtype)
+
+    # MPI type corresponding to the array to sort
+    mpi_type = mpi_datatype(local_median.dtype)
+
     # Iterate until we find all splitting points
     while any(done==False):
 
         # Estimate median of elements in active ranges for each rank
         nlocal  = np.maximum(0,imax-imin+1)             # Array with local size of active range for each rank
-        nactive     = gather_to_2d_array(nlocal, comm)
-        nactive_sum = np.sum(nactive, axis=0)              # sum over tasks, gives one element per rank
+        nactive_sum = np.empty_like(nlocal)
+        comm.Allreduce(nlocal, nactive_sum, op=MPI.SUM)
         for i in range(nranks):
             if nlocal[i] > 0 and not(done[i]):
                 local_median[i] = arr[imin[i]+nlocal[i]//2]
-                weight[i]       = float(nlocal[i]) / float(nactive_sum[i])
+                local_weight[i] = float(nlocal[i]) / float(nactive_sum[i])
             else:
                 local_median[i] = 0.0
-                weight[i]       = 0.0
+                local_weight[i] = 0.0
 
-        # Gather medians from all tasks
-        medians = gather_to_2d_array(local_median, comm) # Returns 2D array of size [comm_size, nranks]
-        weights = gather_to_2d_array(weight, comm)
-
-        # Calculate median of medians for each rank
-        for i in range(nranks):
-            if not(done[i]):
-                est_median[i] = weighted_median(medians[:,i], weights[:,i])
+        if nranks > comm_size:
+            # This method is slow but works for any number of ranks to find
+            medians = gather_to_2d_array(local_median, comm) # Returns 2D array of size [comm_size, nranks]
+            weights = gather_to_2d_array(local_weight, comm)
+            # Calculate median of medians for each rank
+            for i in range(nranks):
+                if not(done[i]):
+                    est_median[i] = weighted_median(medians[:,i], weights[:,i])
+                else:
+                    est_median[i] = 0.0
+        else:
+            # if nranks <= comm_size we can assign each rank to a different MPI task
+            # and compute the medians in parallel
+            send_median[:nranks] = local_median
+            send_weight[:nranks] = local_weight
+            comm.Alltoall([send_median, mpi_type], [recv_median, mpi_type])
+            comm.Alltoall(send_weight, recv_weight)
+            if comm_rank < nranks and not(done[comm_rank]):
+                local_est_median = weighted_median(recv_median, recv_weight)
             else:
-                est_median[i] = 0.0
+                local_est_median = recv_median[0] # Not used, but need to set a value for Allgather
+            # All MPI tasks need the full array of medians
+            comm.Allgather([local_est_median, mpi_type], [est_median, mpi_type])
+        
+        # Find first and last elements where estimated medians can be inserted in sorted array
+        ifirst = np.searchsorted(arr, est_median[:nranks][done==False], side='left')
+        ilast  = np.searchsorted(arr, est_median[:nranks][done==False], side='right')
+        fsum = np.empty_like(ifirst)
+        comm.Allreduce(ifirst, fsum)
+        lsum = np.empty_like(ilast)
+        comm.Allreduce(ilast, lsum)
 
-        # Find first and last elements where estimated medians
-        # can be inserted in sorted array
-        ifirst = np.searchsorted(arr, est_median, side='left')
-        ilast  = np.searchsorted(arr, est_median, side='right')
-        ifirst_all = gather_to_2d_array(ifirst, comm) # Returns 2D array of size [comm_size, nranks]
-        ilast_all  = gather_to_2d_array(ilast, comm)
-        fsum = np.sum(ifirst_all, axis=0, dtype=index_dtype) # Sum over tasks, leaves one element per rank to find
-        lsum = np.sum(ilast_all,  axis=0, dtype=index_dtype)
-
-        for i in range(nranks):
+        j = 0 # Index into arrays which only have elements for ranks with done=False
+        for i in range(nranks): # Index into arrays with elements for all ranks
             if not done[i]:
                 # Check if we've found the target rank
-                min_rank = fsum[i]      # Min rank est_median could have
-                max_rank = lsum[i] - 1  # Max rank est_median could have
+                min_rank = fsum[j]      # Min rank est_median could have
+                max_rank = lsum[j] - 1  # Max rank est_median could have
                 # If requested rank is in the range of ranks with value
                 # est_median, we're done.
                 if r[i] >= min_rank and r[i] <= max_rank:
@@ -377,10 +399,13 @@ def find_splitting_points(arr, r, comm=None):
                     done[i]         = True
                 # If rank of est_median is too low, increase lower limit
                 if max_rank < r[i]:
-                    imin[i] = max((imin[i], ilast[i]))
+                    imin[i] = max((imin[i], ilast[j]))
                 # If rank of est_median is too high, lower the upper limit
                 if min_rank > r[i]:
-                    imax[i] = min((imax[i], ifirst[i] - 1))
+                    imax[i] = min((imax[i], ifirst[j] - 1))
+                j += 1
+
+    mpi_type.Free()
 
     return res_median, res_min_rank, res_max_rank
 

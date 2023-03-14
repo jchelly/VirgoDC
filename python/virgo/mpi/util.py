@@ -1,8 +1,44 @@
 #!/bin/env python
 
+import argparse
+import sys
+import os
+
 import numpy as np
 import virgo.mpi.gather_array as ga
 import virgo.mpi.parallel_sort as ps
+
+
+class MPIArgumentParserError(Exception): pass
+
+class MPIArgumentParser(argparse.ArgumentParser):
+    """
+    Argument parser which discards arguments on ranks>0 and broadcasts
+    the result from rank 0 to all ranks. All ranks abort if rank 0 has
+    incorrect arguments. Error message is written to rank 0's stderr.
+    """
+    def __init__(self, comm, *args, **kwargs):
+        os.environ['COLUMNS'] = '80' # Can't detect terminal width when running under MPI?
+        self.comm = comm
+        super().__init__(*args, **kwargs)
+
+    def error(self, message):
+        if self.comm.Get_rank() == 0:
+            sys.stderr.write(message+"\n")
+        raise MPIArgumentParserError(message)
+
+    def parse_args(self, *args, **kwargs):
+        try:
+            result = super().parse_args(*args, **kwargs)
+        except MPIArgumentParserError:
+            result = None
+        result = self.comm.bcast(result)
+        if result is None:
+            from mpi4py import MPI
+            MPI.Finalize()
+            sys.exit(0)
+        return result
+
 
 def broadcast_dtype_and_dims(arr, comm=None):
     """

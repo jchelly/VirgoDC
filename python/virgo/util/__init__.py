@@ -5,4 +5,5 @@ __all__ = [
     "read_multi",
     "match",
     "ranges",
+    "partial_formatter",
     ]
