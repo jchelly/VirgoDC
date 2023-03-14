@@ -918,11 +918,6 @@ def reduce_elements(arr, updates, index, op, comm=None):
     # Ensure input indexes are an array of index_dtype
     index = np.asarray(index, dtype=index_dtype)
 
-    # Check that all elements are in range
-    if np.any(index < 0) or np.any(index >= arr.shape[0]):
-        print("update_elements() - index out of range!")
-        comm.Abort()
-
     # Check that index is 1D
     if len(index.shape) != 1:
         print("update_elements() - index must be one dimensional!")
@@ -942,7 +937,7 @@ def reduce_elements(arr, updates, index, op, comm=None):
     local_offset = comm.scan(len(arr)) - len(arr)
     local_length = len(arr)
     all_local_offsets = np.asarray(comm.allgather(local_offset), dtype=index_dtype)
-    all_local_lengths = np.asarray(comm.allgather(local_lengths), dtype=index_dtype)
+    all_local_lengths = np.asarray(comm.allgather(local_length), dtype=index_dtype)
 
     # Sort updates by destination index
     order   = np.argsort(index)
@@ -959,7 +954,7 @@ def reduce_elements(arr, updates, index, op, comm=None):
 
     # Compute send and receive counts
     send_displ = np.cumsum(send_count) - send_count
-    recv_count = np.ndarray(comm_size, dtype=index_dtype)
+    recv_count = np.ndarray(comm.Get_size(), dtype=index_dtype)
     comm.Alltoall(send_count, recv_count)
     recv_displ = np.cumsum(recv_count) - recv_count
 
