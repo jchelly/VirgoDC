@@ -339,3 +339,48 @@ def run_large_parallel_sort(elements_per_rank, comm=None):
 def test_large_parallel_sort():
     run_large_parallel_sort(elements_per_rank=10000000)
     
+
+def run_parallel_bincount(elements_per_rank, max_value, weighted=False, comm=None):
+    """
+    Run a parallel bin count without weights
+    """
+
+    from mpi4py import MPI
+    if comm is None:
+        comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+
+    # Create input arrays
+    n = np.random.randint(2*elements_per_rank)
+    arr = np.random.randint(max_value, size=n)
+    ntot = comm.allreduce(n)
+    if weighted:
+        # Here we want to do the calculation in double precision
+        # but use only single precision values to avoid rounding error.
+        weights = np.random.rand(n).astype(np.float32).astype(np.float64)
+    else:
+        weights = None
+
+    # Run the calculation and gather results on rank 0
+    count1 = psort.parallel_bincount(arr, minlength=max_value+1, weights=weights, comm=comm)
+    count1 = np.concatenate(comm.allgather(count1))
+
+    # Check using np.bincount
+    count2 = np.bincount(arr, minlength=max_value+1, weights=weights)
+    count2 = comm.allreduce(count2)
+
+    assert_all_ranks(len(count1)==len(count2), "Parallel bin count length does not match serial version", comm)
+    assert_all_ranks(np.all(count1==count2), "Parallel bin count value does not match serial version", comm)
+
+@pytest.mark.mpi
+def test_bincount_no_weights():
+    run_parallel_bincount(elements_per_rank=10000, max_value=100, weighted=False, comm=None)
+
+@pytest.mark.mpi
+def test_bincount_no_weights_few_values():
+    run_parallel_bincount(elements_per_rank=10000, max_value=1, weighted=False, comm=None)
+
+@pytest.mark.mpi
+def test_bincount_with_weights():
+    run_parallel_bincount(elements_per_rank=10000, max_value=100, weighted=True, comm=None)

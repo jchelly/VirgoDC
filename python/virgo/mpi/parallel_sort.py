@@ -908,6 +908,10 @@ def reduce_elements(arr, updates, index, op, comm=None):
 
     For multidimensional arrays index is taken to refer to the first
     dimension.
+
+    The operator may alternatively be a numpy ufunc. In this case
+    its at() method is used to apply the updates, which is likely to
+    be faster.
     """
 
     # Get communicator to use
@@ -982,7 +986,71 @@ def reduce_elements(arr, updates, index, op, comm=None):
     assert np.all(index_recv <= len(arr))
 
     # Apply updates to the local array elements
-    for i, j in enumerate(index_recv):
-        op.Reduce_local(updates_recv[i,...], arr[j,...])
+    if isinstance(op, np.ufunc):
+        # op is a numpy ufunc
+        op.at(arr, index_recv, updates_recv)
+    else:
+        # op is an MPI operator
+        for i, j in enumerate(index_recv):
+            op.Reduce_local(updates_recv[i,...], arr[j,...])
 
 
+def parallel_bincount(x, weights=None, minlength=None, result=None, comm=None):
+    """
+    Parallel version of numpy.bincount where input and output are
+    distributed arrays.
+    """
+
+    # Get communicator to use
+    from mpi4py import MPI
+    if comm is None:
+        comm = MPI.COMM_WORLD
+    comm_size = comm.Get_size()
+    comm_rank = comm.Get_rank()
+
+    # Ensure inputs are arrays
+    x = np.asanyarray(x)
+    if weights is not None:
+        weights = np.asanyarray(weights)
+    
+    # Input needs to be integer
+    if x.dtype.kind != "i" and x.dtype.kind != "u":
+        raise ValueError("Input array x must be an integer type")
+
+    # Determine output array data type
+    if result is not None:
+        result_dtype = result.dtype
+    elif weights is not None:
+        result_dtype = weights.dtype
+    else:
+        result_dtype = index_dtype
+
+    # Find the maximum value in x
+    x_max = np.amax(x) if len(x) > 0 else 0
+    x_max = comm.allreduce(x_max, op=MPI.MAX)
+    total_nr_bins = x_max+1
+
+    # Find total number of bins needed
+    if minlength is not None:
+        total_nr_bins = int(max(total_nr_bins, minlength))
+
+    # Allocate result, if necessary
+    if result is None:
+        # Need to decide how to distribute result array if it wasn't provided
+        local_nr_bins = total_nr_bins // comm_size
+        if comm_rank < total_nr_bins % comm_size:
+            local_nr_bins += 1
+        result = np.zeros(local_nr_bins, dtype=result_dtype)
+    else:
+        # Just check result array is large enough
+        if comm.allreduce(len(result)) < total_nr_bins:
+            raise ValueError("Result array is too small")
+    
+    # If no weights are specified, set all to 1
+    if weights is None:
+        weights = np.ones(len(x), dtype=index_dtype)
+
+    # Accumulate weights
+    reduce_elements(result, weights, x, op=np.add, comm=comm)
+
+    return result
