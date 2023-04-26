@@ -13,9 +13,12 @@ BUFFER_SIZE=100*1024*1024
 
 def compress_dcpl(dcpl, shape, gzip=None, shuffle=False, chunk=None):
     """
-    Convenience function for enabling compression.
-    Enables chunking along first dimension if necessary.
+    Convenience function for enabling compression. Enables chunking along
+    first dimension if necessary. Returns a new, updated property list and
+    leaves the input property list unchanged.
     """
+
+    dcpl = dcpl.copy()
 
     # Find total number of elements
     nr_elements = 1
@@ -46,6 +49,8 @@ def compress_dcpl(dcpl, shape, gzip=None, shuffle=False, chunk=None):
         dcpl.set_deflate(gzip)
     if shuffle:
         dcpl.set_shuffle()
+
+    return dcpl
 
 
 class AttributeArray(np.ndarray):
@@ -188,8 +193,8 @@ def collective_write(group, name, data, comm, buffer_size=None, create_dataset=T
     if create_dataset:
         dspace_id = h5py.h5s.create_simple(tuple(full_shape))
         dtype_id = h5py.h5t.py_create(data.dtype)
-        compress_dcpl(dcpl, full_shape, gzip, shuffle, chunk)
-        dataset_id = h5py.h5d.create(group.id, name.encode(), dtype_id, dspace_id, dcpl=dcpl)
+        dcpl_compressed = compress_dcpl(dcpl, full_shape, gzip, shuffle, chunk)
+        dataset_id = h5py.h5d.create(group.id, name.encode(), dtype_id, dspace_id, dcpl=dcpl_compressed)
         dataset = h5py.Dataset(dataset_id)
     else:
         dataset = group[name]
@@ -638,6 +643,9 @@ class MultiFile:
         first = self.first_file_on_rank[rank]
         num   = self.num_files_on_rank[rank]
 
+        if dcpl is None:
+            dcpl = h5py.h5p.create(h5py.h5p.DATASET_CREATE)
+
         offset = 0
         for i in range(first, first+num):
             filename = all_filenames[i]
@@ -653,12 +661,10 @@ class MultiFile:
                 length = elements_per_file[self.all_file_indexes[i]]
                 for name in data:
                     shape = tuple((length,)+data[name].shape[1:])
-                    if dcpl is None:
-                        dcpl = h5py.h5p.create(h5py.h5p.DATASET_CREATE)
-                        compress_dcpl(dcpl, shape, gzip, shuffle, chunk)
+                    dcpl_compressed = compress_dcpl(dcpl, shape, gzip, shuffle, chunk)
                     dspace_id = h5py.h5s.create_simple(shape)
                     dtype_id = h5py.h5t.py_create(data[name].dtype)
-                    dataset_id = h5py.h5d.create(loc.id, name.encode(), dtype_id, dspace_id, dcpl=dcpl)
+                    dataset_id = h5py.h5d.create(loc.id, name.encode(), dtype_id, dspace_id, dcpl=dcpl_compressed)
                     dataset = h5py.Dataset(dataset_id)
                     dataset[...] = data[name][offset:offset+length,...]
                     if attrs is not None and name in attrs:
