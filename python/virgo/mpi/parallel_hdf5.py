@@ -20,6 +20,10 @@ def compress_dcpl(dcpl, shape, gzip=None, shuffle=False, chunk=None):
 
     dcpl = dcpl.copy()
 
+    # Skip compression and chunking of parallel I/O for HDF5 before 1.12.0
+    if h5py.version.hdf5_version_tuple < (1,12,0):
+        return dcpl
+
     # Find total number of elements
     nr_elements = 1
     for n in shape:
