@@ -94,7 +94,8 @@ def collective_read(dataset, comm, buffer_size=None):
     return data
 
 
-def collective_write(group, name, data, comm, buffer_size=None, create_dataset=True):
+def collective_write(group, name, data, comm, buffer_size=None, create_dataset=True,
+                     dcpl=None):
     """
     Do a parallel collective write of a HDF5 dataset by concatenating
     contributions from MPI ranks along the first axis.
@@ -140,7 +141,12 @@ def collective_write(group, name, data, comm, buffer_size=None, create_dataset=T
 
     # Create the dataset if necessary
     if create_dataset:
-        dataset = group.create_dataset(name, shape=full_shape, dtype=dtype_rank0)
+        if dcpl is None:
+            dcpl = h5py.h5p.create(h5py.h5p.DATASET_CREATE)
+        dspace_id = h5py.h5s.create_simple(tuple(full_shape))
+        dtype_id = h5py.h5t.py_create(data.dtype)
+        dataset_id = h5py.h5d.create(group.id, name.encode(), dtype_id, dspace_id, dcpl=dcpl)
+        dataset = h5py.Dataset(dataset_id)
     else:
         dataset = group[name]
 
@@ -575,7 +581,7 @@ class MultiFile:
 
         return elements_per_file
 
-    def _write_independent(self, data, elements_per_file, all_filenames, mode, group=None, attrs=None):
+    def _write_independent(self, data, elements_per_file, all_filenames, mode, group=None, attrs=None, dcpl=None):
         """
         Write arrays to multiple files, assuming at least one file per MPI rank.
         """
@@ -601,14 +607,21 @@ class MultiFile:
                 # Write the data
                 length = elements_per_file[self.all_file_indexes[i]]
                 for name in data:
-                    loc[name] = data[name][offset:offset+length,...]
+                    shape = tuple((length,)+data[name].shape[1:])
+                    if dcpl is None:
+                        dcpl = h5py.h5p.create(h5py.h5p.DATASET_CREATE)
+                    dspace_id = h5py.h5s.create_simple(shape)
+                    dtype_id = h5py.h5t.py_create(data[name].dtype)
+                    dataset_id = h5py.h5d.create(loc.id, name.encode(), dtype_id, dspace_id, dcpl=dcpl)
+                    dataset = h5py.Dataset(dataset_id)
+                    dataset[...] = data[name][offset:offset+length,...]
                     if attrs is not None and name in attrs:
                         for attr_name, attr_val in attrs[name].items():
-                            loc[name].attrs[attr_name] = attr_val
+                            dataset.attrs[attr_name] = attr_val
 
                 offset += length
 
-    def _write_collective(self, data, elements_per_file, all_filenames, mode, group=None, attrs=None):
+    def _write_collective(self, data, elements_per_file, all_filenames, mode, group=None, attrs=None, dcpl=None):
         """
         Write arrays to multiple files in collective mode.
         """
@@ -632,7 +645,7 @@ class MultiFile:
             length = elements_per_file[self.all_file_indexes[self.collective_file_nr]]
             assert length == data[name].shape[0]
             length_tot = comm.allreduce(length)
-            dataset = collective_write(loc, name, data[name], comm)
+            dataset = collective_write(loc, name, data[name], comm, dcpl=dcpl)
             if attrs is not None and name in attrs:
                 for attr_name, attr_val in attrs[name].items():
                     dataset.attrs[attr_name] = attr_val
@@ -640,7 +653,7 @@ class MultiFile:
         outfile.close()
         comm.Free()
 
-    def write(self, data, elements_per_file, filenames, mode, group=None, attrs=None):
+    def write(self, data, elements_per_file, filenames, mode, group=None, attrs=None, dcpl=None):
         """
         Write out the supplied datasets with the same layout as the
         input. Use mode parameter to choose whether to create new
@@ -662,8 +675,8 @@ class MultiFile:
 
         if self.collective:
             # Collective mode
-            self._write_collective(data, elements_per_file, all_filenames, mode, group, attrs)
+            self._write_collective(data, elements_per_file, all_filenames, mode, group, attrs, dcpl)
         else:
             # Independent mode
-            self._write_independent(data, elements_per_file, all_filenames, mode, group, attrs)
+            self._write_independent(data, elements_per_file, all_filenames, mode, group, attrs, dcpl)
             
