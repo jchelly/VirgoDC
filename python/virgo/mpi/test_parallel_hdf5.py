@@ -443,7 +443,7 @@ def test_multi_file_one_file_per_rank_group(tmp_path):
                            group="group")
 
 def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename, have_missing=False, group=None,
-                          filename_method="attribute"):
+                          filename_method="attribute", compression=None):
     """
     Check that writing out a distributed array to a file set
     then reading it back in preserves the values.
@@ -452,6 +452,9 @@ def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename, have_
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
     comm_size = comm.Get_size()
+
+    if compression is None:
+        compression = {}
 
     # Sync path between ranks
     tmp_path = comm.bcast(tmp_path)
@@ -479,10 +482,10 @@ def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename, have_
     elements_per_file = mf.get_elements_per_file("data", group=group)
     filenames2 = str(tmp_path / f"{basename}.mf_write_test.%(file_nr)d.hdf5")
     if filename_method != "list":
-        mf.write({"data" : data}, elements_per_file, filenames2, "w", group=group)
+        mf.write({"data" : data}, elements_per_file, filenames2, "w", group=group, **compression)
     else:
         all_filenames = [filenames2 % {"file_nr" : i} for i in range(nr_files)]
-        mf.write({"data" : data}, elements_per_file, all_filenames, "w", group=group)
+        mf.write({"data" : data}, elements_per_file, all_filenames, "w", group=group, **compression)
 
     comm.barrier()
 
@@ -519,13 +522,21 @@ def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename, have_
     equal = comm.bcast(equal)
     assert equal, "Array written to file set did not round trip"
 
-def multi_file_round_trip_all_methods(tmp_path, nr_files, elements_per_file, basename, have_missing=False, group=None):
+def multi_file_round_trip_all_methods(tmp_path, nr_files, elements_per_file, basename,
+                                      have_missing=False, group=None):
     """
     Run multi file round trip test with different methods for generating filenames
+    and compression options
     """
+    compressions = (
+        {},
+        {"gzip" : 6, "chunk" : 10*1024},
+        {"gzip" : 6, "chunk" : 10*1024, "shuffle" : True},
+    )
     for filename_method in ("dataset", "attribute", "list"):
-        multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename+"_"+filename_method,
-                              have_missing, group, filename_method=filename_method)
+        for compression in compressions:
+            multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename+"_"+filename_method,
+                                  have_missing, group, filename_method=filename_method, compression=compression)
 
 @pytest.mark.mpi
 def test_round_trip_single_file(tmp_path):
