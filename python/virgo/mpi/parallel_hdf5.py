@@ -16,6 +16,10 @@ def compress_dcpl(dcpl, shape, gzip=None, shuffle=False, chunk=None):
     Convenience function for enabling compression. Enables chunking along
     first dimension if necessary. Returns a new, updated property list and
     leaves the input property list unchanged.
+
+    Note that using romio from openmpi v4 can cause segfaults when writing
+    compressed datasets in parallel (see
+    https://github.com/open-mpi/ompi/issues/7795).
     """
 
     dcpl = dcpl.copy()
