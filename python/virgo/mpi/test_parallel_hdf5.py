@@ -99,47 +99,56 @@ def do_collective_write(tmp_path, max_local_size, buffer_size=None):
     """
     Write out a dataset in collective mode, read it back in serial mode
     then gather on rank zero to check that the contents are correct.
+
+    Repeats test with different compression options.
     """
 
-    from mpi4py import MPI
-    comm = MPI.COMM_WORLD
-    comm_rank = comm.Get_rank()
-    comm_size = comm.Get_size()
+    no_compression     = {}
+    gzip_chunk         = {"gzip" : 6, "chunk" : buffer_size}
+    gzip_shuffle_chunk = {"gzip" : 6, "chunk" : buffer_size, "shuffle" : True}
 
-    # If max_local_size is an int, make it a single element tuple
-    try:
-        max_local_size = tuple([int(i) for i in max_local_size])
-    except TypeError:
-        max_local_size = (int(max_local_size),)
+    for compression in (no_compression, gzip_shuffle_chunk):
 
-    # Where to write the test file
-    filepath = tmp_path / f"collective_read_test_{max_local_size}.hdf5"
-    filepath = comm.bcast(filepath)
+        from mpi4py import MPI
+        comm = MPI.COMM_WORLD
+        comm_rank = comm.Get_rank()
+        comm_size = comm.Get_size()
 
-    # Generate the test data
-    if max_local_size[0] > 0:
-        n_local = np.random.randint(max_local_size[0])
-    else:
-        n_local = 0
-    arr_local = np.random.uniform(low=-1.0e6, high=1.0e6, size=(n_local,)+max_local_size[1:])
-    
-    # Write out the data in collective mode
-    with h5py.File(filepath, "w", driver="mpio", comm=comm) as outfile:
-        phdf5.collective_write(outfile, "data", arr_local, comm, buffer_size)
-    comm.barrier()
+        # If max_local_size is an int, make it a single element tuple
+        try:
+            max_local_size = tuple([int(i) for i in max_local_size])
+        except TypeError:
+            max_local_size = (int(max_local_size),)
 
-    # Gather data on rank zero and check
-    arr = comm.gather(arr_local)
-    if comm_rank == 0:
-        arr = np.concatenate(arr)
-        with h5py.File(filepath, "r") as infile:
-            arr_check = infile["data"][...]
-        all_equal = np.all(arr==arr_check)
-    else:
-        all_equal = None
-    all_equal = comm.bcast(all_equal)
+        # Where to write the test file
+        filepath = tmp_path / f"collective_read_test_{max_local_size}.hdf5"
+        filepath = comm.bcast(filepath)
 
-    assert all_equal, "Collective write returned incorrect data"
+        # Generate the test data
+        if max_local_size[0] > 0:
+            n_local = np.random.randint(max_local_size[0])
+        else:
+            n_local = 0
+        arr_local = np.random.uniform(low=-1.0e6, high=1.0e6, size=(n_local,)+max_local_size[1:])
+
+        # Write out the data in collective mode
+        with h5py.File(filepath, "w", driver="mpio", comm=comm) as outfile:
+            phdf5.collective_write(outfile, "data", arr_local, comm, buffer_size, **compression)
+        comm.barrier()
+
+        # Gather data on rank zero and check
+        arr = comm.gather(arr_local)
+        if comm_rank == 0:
+            arr = np.concatenate(arr)
+            with h5py.File(filepath, "r") as infile:
+                arr_check = infile["data"][...]
+            all_equal = np.all(arr==arr_check)
+        else:
+            all_equal = None
+        all_equal = comm.bcast(all_equal)
+
+        assert all_equal, "Collective write returned incorrect data"
+
 
 @pytest.mark.mpi
 def test_collective_write_empty(tmp_path):
