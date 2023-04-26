@@ -7,7 +7,7 @@ import virgo.mpi.util
 
 # Default maximum size of I/O operations in bytes.
 # This is to avoid MPI issues with buffers >2GB.
-CHUNK_SIZE=100*1024*1024
+BUFFER_SIZE=100*1024*1024
 
 
 class AttributeArray(np.ndarray):
@@ -24,7 +24,7 @@ class AttributeArray(np.ndarray):
         self.attrs = getattr(obj, 'attrs', None)
 
 
-def collective_read(dataset, comm, chunk_size=None):
+def collective_read(dataset, comm, buffer_size=None):
     """
     Do a parallel collective read of a HDF5 dataset by splitting
     the dataset equally between MPI ranks along its first axis.
@@ -32,8 +32,8 @@ def collective_read(dataset, comm, chunk_size=None):
     File must have been opened in MPI mode.
     """
 
-    if chunk_size is None:
-        chunk_size = CHUNK_SIZE
+    if buffer_size is None:
+        buffer_size = BUFFER_SIZE
 
     # Avoid initializing HDF5 (and therefore MPI) until necessary
     import h5py
@@ -69,9 +69,9 @@ def collective_read(dataset, comm, chunk_size=None):
             element_size *= s
         local_nr_bytes = num_on_task[comm_rank] * element_size
         # Compute number of iterations this task needs
-        chunk_size_elements = chunk_size // element_size
-        local_nr_iterations = num_on_task[comm_rank] // chunk_size_elements
-        if num_on_task[comm_rank] % chunk_size_elements > 0:
+        buffer_size_elements = buffer_size // element_size
+        local_nr_iterations = num_on_task[comm_rank] // buffer_size_elements
+        if num_on_task[comm_rank] % buffer_size_elements > 0:
             local_nr_iterations += 1
         # Find maximum number of iterations over all tasks
         global_nr_iterations = comm.allreduce(local_nr_iterations, op=MPI.MAX)
@@ -84,7 +84,7 @@ def collective_read(dataset, comm, chunk_size=None):
         offset_in_file = offset_on_task[comm_rank]
         nr_left = num_on_task[comm_rank]
         for i in range(global_nr_iterations):
-            length = min(nr_left, chunk_size_elements)
+            length = min(nr_left, buffer_size_elements)
             with dataset.collective:
                 data[offset_in_mem:offset_in_mem+length,...] = dataset[offset_in_file:offset_in_file+length,...]
             offset_in_mem += length
@@ -94,7 +94,7 @@ def collective_read(dataset, comm, chunk_size=None):
     return data
 
 
-def collective_write(group, name, data, comm, chunk_size=None, create_dataset=True):
+def collective_write(group, name, data, comm, buffer_size=None, create_dataset=True):
     """
     Do a parallel collective write of a HDF5 dataset by concatenating
     contributions from MPI ranks along the first axis.
@@ -102,8 +102,8 @@ def collective_write(group, name, data, comm, chunk_size=None, create_dataset=Tr
     File must have been opened in MPI mode.
     """
 
-    if chunk_size is None:
-        chunk_size = CHUNK_SIZE
+    if buffer_size is None:
+        buffer_size = BUFFER_SIZE
 
     import h5py
     from mpi4py import MPI
@@ -153,7 +153,7 @@ def collective_write(group, name, data, comm, chunk_size=None, create_dataset=Tr
     element_size = data.dtype.itemsize
     for s in full_shape[1:]:
         element_size *= s
-    max_elements = chunk_size // element_size
+    max_elements = buffer_size // element_size
 
     # We need to use the low level interface here because the h5py high
     # level interface omits zero sized writes, which causes a hang in
