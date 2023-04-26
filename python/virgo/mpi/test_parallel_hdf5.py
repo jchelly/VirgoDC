@@ -107,7 +107,7 @@ def do_collective_write(tmp_path, max_local_size, buffer_size=None):
     gzip_chunk         = {"gzip" : 6, "chunk" : buffer_size}
     gzip_shuffle_chunk = {"gzip" : 6, "chunk" : buffer_size, "shuffle" : True}
 
-    for compression in (no_compression, gzip_shuffle_chunk):
+    for compression in (no_compression, gzip_chunk, gzip_shuffle_chunk):
 
         from mpi4py import MPI
         comm = MPI.COMM_WORLD
