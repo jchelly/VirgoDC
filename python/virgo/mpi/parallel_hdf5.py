@@ -53,10 +53,10 @@ def compress_dcpl(dcpl, shape, gzip=None, shuffle=False, chunk=None):
             dcpl.set_chunk(tuple(chunk_shape))
         
     # Enable compression
-    if gzip is not None:
-        dcpl.set_deflate(gzip)
     if shuffle:
         dcpl.set_shuffle()
+    if gzip is not None:
+        dcpl.set_deflate(gzip)
 
     return dcpl
 
