@@ -8,7 +8,7 @@ except ImportError:
     from collections import Mapping    
 
 import h5py
-import numpy
+import numpy as np
 import unyt
 import unyt.dimensions as dim
 
@@ -120,7 +120,16 @@ def units_from_attributes(attrs, registry):
         else:
             u = u*h_unit
 
-    return unyt.Unit(u, registry=registry)
+    unit = unyt.Unit(u, registry=registry)
+
+    # SOAP outputs can have units which are not just powers of the base units.
+    cgs_conversion_from_attrs = float(attrs["Conversion factor to CGS (including cosmological corrections)"])
+    cgs_conversion_from_unyt = float((1.0*unit).in_cgs().value)
+    factor = cgs_conversion_from_attrs / cgs_conversion_from_unyt
+    if np.isclose(factor, 1.0, atol=0.0, rtol=1.0e-9):
+        return unit
+    else:
+        return np.round(factor, decimals=9)*unit
 
 
 class SwiftBaseWrapper(Mapping):
@@ -160,19 +169,17 @@ class SwiftDataset(SwiftBaseWrapper):
         for name, value in self.obj.attrs.items():
             self.attrs[name] = value
 
-    def get_unit(self):
-        """
-        Convert the unit attributes into a unyt Unit.
-        """
+    @property
+    def units(self):
         return units_from_attributes(self.attrs, self.registry)
-
+    
     def __getitem__(self, key):
         """
         This handles reading the actual data and returning a unyt quantity
         with suitable units.
         """
         data = self.obj[key]
-        return unyt.array.unyt_array(data, self.get_unit(), registry=self.registry)
+        return unyt.array.unyt_array(data, self.units, registry=self.registry)
 
 
 class SwiftGroup(SwiftBaseWrapper):
