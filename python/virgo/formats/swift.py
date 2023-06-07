@@ -12,6 +12,8 @@ import h5py
 import numpy as np
 import unyt
 import unyt.dimensions as dim
+import swiftsimio
+
 
 # Unyt unit names for basic units in SWIFT
 base_units = {
@@ -132,7 +134,7 @@ def soap_units_from_attributes(attrs, registry):
     if np.isclose(factor, 1.0, atol=0.0, rtol=1.0e-9):
         return unit
     else:
-        return np.round(factor, decimals=9)*unit
+        return unit*factor
 
     
 def swiftsimio_units(group):
@@ -144,7 +146,6 @@ def swiftsimio_units(group):
     is in a sub-group in the file.
     """
     
-    import swiftsimio
     buf = io.BytesIO()
     with h5py.File(buf, 'w') as tmpfile: 
         group.copy("Cosmology", tmpfile)
@@ -159,16 +160,9 @@ def swiftsimio_cosmology(group):
     Generate an astropy cosmology object via swiftsimio, given a HDF5
     group containing SWIFT metadata.
     """
-    import swiftsimio
 
     # Construct the SWIFTUnits object
-    buf = io.BytesIO()
-    with h5py.File(buf, 'w') as tmpfile: 
-        group.copy("Cosmology", tmpfile)
-        group.copy("InternalCodeUnits", tmpfile)
-        group.copy("PhysicalConstants", tmpfile)
-        group.copy("Units", tmpfile)
-    units = swiftsimio.reader.SWIFTUnits(buf)
+    units = swiftsimio_units(group)
 
     # Extract cosmology
     cosmo = {}
@@ -176,7 +170,60 @@ def swiftsimio_cosmology(group):
         cosmo[name] = group["Cosmology"].attrs[name]
     
     return swiftsimio.conversions.swift_cosmology_to_astropy(cosmo, units)
+
+
+def swiftsimio_units_from_attributes(attrs, units):
+    """
+    Given dataset attributes and a SWIFTUnits object, return
+    swiftsimio style units and a flag to indicate if the dataset
+    is comoving.
+    """
+
+    # Determine unyt unit for this quantity
+    u = unyt.dimensionless
+    for dim, unit in (("I", units.current),
+                      ("L", units.length),
+                      ("M", units.mass),
+                      ("T", units.temperature),
+                      ("t", units.time)):
+        exponent = attrs["U_%s exponent" % dim][0]
+        if exponent == 1.0:
+            if u is unyt.dimensionless:
+                u = unit
+            else:
+                u = u*unit
+        elif exponent != 0.0:
+            if u is unyt.dimensionless:
+                u = unit**exponent
+            else:
+                u = u*(unit**exponent)
+
+    # Verify no h dependence, because this is not implemented
+    h_scale_exponent = attrs["h-scale exponent"][0]
+    if h_scale_exponent != 0:
+        raise ValueError("Can't handle output with h dependent units!")
     
+    # Check for comoving units
+    a_scale_exponent = attrs["a-scale exponent"][0]
+    length_exponent = attrs["U_L exponent"][0]
+    if a_scale_exponent == 0.0:
+        comoving = False
+    elif a_scale_exponent == length_exponent:
+        comoving = True
+    else:
+        raise ValueError("Can't determine if dataset is comoving!")
+    
+    # SOAP outputs can have units which are not just powers of the base units.
+    # Note that the units here do not include powers of a, so need to use CGS factor
+    # without cosmological corrections.
+    cgs_conversion_from_attrs = float(attrs["Conversion factor to CGS (not including cosmological corrections)"])
+    cgs_conversion_from_unyt = float((1.0*u).in_cgs().value)
+    factor = cgs_conversion_from_attrs / cgs_conversion_from_unyt
+    if not np.isclose(factor, 1.0, atol=0.0, rtol=1.0e-9):
+        u = u*factor
+
+    return u, comoving
+        
 
 class SwiftBaseWrapper(Mapping):
     """
@@ -204,20 +251,17 @@ class SwiftBaseWrapper(Mapping):
 
 class SwiftDataset(SwiftBaseWrapper):
     
-    def __init__(self, obj):
+    def __init__(self, obj, mode="swiftsimio"):
         """
         This handles opening a dataset. We need to read the dataset
         specific metadata attributes and store them.
         """
         super(SwiftDataset, self).__init__(obj)
-
+        self.mode = mode
+        
         self.attrs = {}
         for name, value in self.obj.attrs.items():
             self.attrs[name] = value
-
-    @property
-    def units(self):
-        return soap_units_from_attributes(self.attrs, self.registry)
     
     def __getitem__(self, key):
         """
@@ -225,8 +269,19 @@ class SwiftDataset(SwiftBaseWrapper):
         with suitable units.
         """
         data = self.obj[key]
-        return unyt.array.unyt_array(data, self.units, registry=self.registry)
-
+        if self.mode == "soap":
+            units =  soap_units_from_attributes(self.attrs, self.soap_registry)        
+            return unyt.array.unyt_array(data, units, registry=self.soap_registry)
+        elif self.mode == "swiftsimio":
+            units, comoving = swiftsimio_units_from_attributes(self.attrs, self.swiftsimio_units)
+            a_symbol = swiftsimio.objects.a
+            a_value = self.expansion_factor
+            a_exponent = self.attrs["a-scale exponent"][0]
+            cosmo_factor = swiftsimio.objects.cosmo_factor(a_symbol**a_exponent, scale_factor=a_value)
+            return swiftsimio.objects.cosmo_array(data, units=units, comoving=comoving, cosmo_factor=cosmo_factor)
+        else:
+            raise ValueError(f"Unrecognized mode parameter {self.mode}")
+        
 
 class SwiftGroup(SwiftBaseWrapper):
     """
@@ -249,30 +304,50 @@ class SwiftGroup(SwiftBaseWrapper):
         else:
             result = obj
         if result is not obj:
-            result.registry = self.registry
+            result.soap_registry = self.soap_registry
+            result.swiftsimio_units = self.swiftsimio_units
+            result.mode = self.mode
+            result.cosmology = self.cosmology
+            result.expansion_factor = self.expansion_factor
         return result
 
     def get_unit(self, name):
         """
         Given a unit name, return a Unit object
         """
-        return unyt.Unit(name, registry=self.registry)
+        return unyt.Unit(name, registry=self.soap_registry)
 
 
-class SwiftSnapshot(SwiftGroup):
+class SwiftFile(SwiftGroup):
     """
-    This is a wrapper around the h5py.File object for an
-    open snapshot file.
+    This is a wrapper around the h5py.File object for a file
+    containing arrays with Swift style metadata.
 
     All arguments are passed to the underlying h5py.File.
     """
-    def __init__(self, *args, **kwargs):
- 
+    def __init__(self, mode, metadata_path, *args, **kwargs):
+
+        self.mode = mode
+        
         # Open the HDF5 file
-        super(SwiftSnapshot, self).__init__(h5py.File(*args, **kwargs))
+        super(SwiftFile, self).__init__(h5py.File(*args, **kwargs))
 
-        # Read unit information
-        self.registry = soap_unit_registry_from_snapshot(self.obj)
+        # Read SOAP style unit information
+        self.soap_registry = soap_unit_registry_from_snapshot(self.obj[metadata_path])
 
+        # Read swiftsimio units
+        self.swiftsimio_units = swiftsimio_units(self.obj[metadata_path])
+        
         # Read cosmology
-        self.cosmology = swiftsimio_cosmology(self.obj)
+        self.cosmology = swiftsimio_cosmology(self.obj[metadata_path])
+        self.expansion_factor = self.obj[metadata_path]["Cosmology"].attrs["Scale-factor"][0]
+
+
+class SwiftSnapshot(SwiftFile):
+    """
+    This is a wrapper around the h5py.File object for an
+    open snapshot file.
+    """
+    def __init__(self, *args, mode="swiftsimio", **kwargs): 
+        metadata_path="/"
+        super(SwiftSnapshot, self).__init__(mode, metadata_path, *args, **kwargs)

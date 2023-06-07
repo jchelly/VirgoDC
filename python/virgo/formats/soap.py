@@ -1,24 +1,15 @@
 #!/bin/env python
 
 import h5py
-from virgo.formats.swift import SwiftGroup, soap_unit_registry_from_snapshot, swiftsimio_cosmology
+from virgo.formats.swift import SwiftFile
 
 
-class SOAPCatalogue(SwiftGroup):
+class SOAPCatalogue(SwiftFile):
     """
     This is a wrapper around the h5py.File object for an
     open SOAP file.
-
-    All arguments are passed to the underlying h5py.File.
     """
-    def __init__(self, *args, **kwargs):
- 
-        # Open the HDF5 file
-        super(SOAPCatalogue, self).__init__(h5py.File(*args, **kwargs))
-
-        # Read unit information
-        self.registry = soap_unit_registry_from_snapshot(self.obj["SWIFT"])
-
-        # Read cosmology
-        self.cosmology = swiftsimio_cosmology(self.obj["SWIFT"])
+    def __init__(self, *args, mode="swiftsimio", **kwargs): 
+        metadata_path="SWIFT"
+        super(SOAPCatalogue, self).__init__(mode, metadata_path, *args, **kwargs)
 
