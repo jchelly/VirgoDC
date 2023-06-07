@@ -1,7 +1,7 @@
 #!/bin/env python
 
 import h5py
-from virgo.formats.swift import SwiftGroup, unit_registry_from_snapshot
+from virgo.formats.swift import SwiftGroup, soap_unit_registry_from_snapshot, swiftsimio_cosmology
 
 
 class SOAPCatalogue(SwiftGroup):
@@ -17,4 +17,8 @@ class SOAPCatalogue(SwiftGroup):
         super(SOAPCatalogue, self).__init__(h5py.File(*args, **kwargs))
 
         # Read unit information
-        self.registry = unit_registry_from_snapshot(self.obj["SWIFT"])
+        self.registry = soap_unit_registry_from_snapshot(self.obj["SWIFT"])
+
+        # Read cosmology
+        self.cosmology = swiftsimio_cosmology(self.obj["SWIFT"])
+

@@ -1,6 +1,7 @@
 #!/bin/env python
 
 import re
+import io
 
 try:
     from collections.abc import Mapping
@@ -22,8 +23,10 @@ base_units = {
 }
 
 
-def unit_registry_from_snapshot(snap):
-
+def soap_unit_registry_from_snapshot(snap):
+    """
+    Generate system of units as used in SOAP from SWIFT metadata
+    """
     # Read snapshot metadata
     physical_constants_cgs = {name : float(value) for name, value in snap["PhysicalConstants/CGS"].attrs.items()}
     cosmology = {name : float(value) for name, value in snap["Cosmology"].attrs.items()}
@@ -71,9 +74,9 @@ def unit_registry_from_snapshot(snap):
     return reg
 
 
-def units_from_attributes(attrs, registry):
+def soap_units_from_attributes(attrs, registry):
     """
-    Create a unyt.Unit object from dataset attributes
+    Create a SOAP style unyt.Unit object from dataset attributes
 
     attrs: the SWIFT dataset attributes dict
     registry: unyt unit registry with a, h and unit system for the snapshot
@@ -131,6 +134,49 @@ def units_from_attributes(attrs, registry):
     else:
         return np.round(factor, decimals=9)*unit
 
+    
+def swiftsimio_units(group):
+    """
+    Given a HDF5 group containing swift unit information, return a
+    swiftsimio units object.
+
+    This is useful for SOAP output, where the unit information
+    is in a sub-group in the file.
+    """
+    
+    import swiftsimio
+    buf = io.BytesIO()
+    with h5py.File(buf, 'w') as tmpfile: 
+        group.copy("Cosmology", tmpfile)
+        group.copy("InternalCodeUnits", tmpfile)
+        group.copy("PhysicalConstants", tmpfile)
+        group.copy("Units", tmpfile)
+    return swiftsimio.reader.SWIFTUnits(buf)
+
+
+def swiftsimio_cosmology(group):
+    """
+    Generate an astropy cosmology object via swiftsimio, given a HDF5
+    group containing SWIFT metadata.
+    """
+    import swiftsimio
+
+    # Construct the SWIFTUnits object
+    buf = io.BytesIO()
+    with h5py.File(buf, 'w') as tmpfile: 
+        group.copy("Cosmology", tmpfile)
+        group.copy("InternalCodeUnits", tmpfile)
+        group.copy("PhysicalConstants", tmpfile)
+        group.copy("Units", tmpfile)
+    units = swiftsimio.reader.SWIFTUnits(buf)
+
+    # Extract cosmology
+    cosmo = {}
+    for name in group["Cosmology"].attrs:
+        cosmo[name] = group["Cosmology"].attrs[name]
+    
+    return swiftsimio.conversions.swift_cosmology_to_astropy(cosmo, units)
+    
 
 class SwiftBaseWrapper(Mapping):
     """
@@ -171,7 +217,7 @@ class SwiftDataset(SwiftBaseWrapper):
 
     @property
     def units(self):
-        return units_from_attributes(self.attrs, self.registry)
+        return soap_units_from_attributes(self.attrs, self.registry)
     
     def __getitem__(self, key):
         """
@@ -226,4 +272,7 @@ class SwiftSnapshot(SwiftGroup):
         super(SwiftSnapshot, self).__init__(h5py.File(*args, **kwargs))
 
         # Read unit information
-        self.registry = unit_registry_from_snapshot(self.obj)
+        self.registry = soap_unit_registry_from_snapshot(self.obj)
+
+        # Read cosmology
+        self.cosmology = swiftsimio_cosmology(self.obj)
