@@ -236,6 +236,24 @@ have approximately equal numbers of elements on each MPI rank.
 
 The input array must be one dimensional.
 
+#### Parallel bin count
+
+```
+virgo.mpi.parallel_sort.parallel_bincount(x, weights=None, minlength=None,
+                                          result=None, comm=None)
+```
+
+This is roughly equivalent to np.bincount but for distributed arrays. Given
+an input 1D array x with integer values 0 to N it counts the number of
+instances of each integer and returns the result as a new distributed array.
+
+If `weights` is specified then it must be an array with the same number of
+elements as x. The result will then be the sum of the weights associated
+with each integer value.
+
+`minlength` specifies the minimum size of the output array and `result`
+allows the function to write its output to an existing array.
+
 #### MPI Alltoallv function
 
 ```
