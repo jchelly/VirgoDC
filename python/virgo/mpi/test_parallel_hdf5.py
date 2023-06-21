@@ -6,7 +6,7 @@ import h5py
 import virgo.mpi.parallel_hdf5 as phdf5
 import virgo.mpi.parallel_sort as psort
 
-def do_collective_read(tmp_path, max_local_size, chunk_size=None):
+def do_collective_read(tmp_path, max_local_size, buffer_size=None):
     """
     Write out a dataset in serial mode, read it back in collective mode
     then gather on rank zero to check that the contents are correct.
@@ -40,7 +40,7 @@ def do_collective_read(tmp_path, max_local_size, chunk_size=None):
 
     # Read back in the test data
     with h5py.File(filepath, "r", driver="mpio", comm=comm) as infile:
-        arr_coll = phdf5.collective_read(infile["data"], comm, chunk_size)
+        arr_coll = phdf5.collective_read(infile["data"], comm, buffer_size)
 
     # Check the result on rank 0
     arr_coll = comm.gather(arr_coll)
@@ -75,7 +75,7 @@ def test_collective_read_small_chunks_1d(tmp_path):
     Uses small chunk size to test chunked reads
     """
     for max_local_size in (1, 10, 100, 1000, 10000, 100000):
-        do_collective_read(tmp_path, max_local_size, chunk_size=256)
+        do_collective_read(tmp_path, max_local_size, buffer_size=256)
 
 @pytest.mark.mpi
 def test_collective_read_2d(tmp_path):
@@ -93,53 +93,62 @@ def test_collective_read_small_chunks_2d(tmp_path):
     Uses small chunk size to test chunked reads
     """
     for max_local_size in (1, 10, 100, 1000, 10000, 100000):
-        do_collective_read(tmp_path, (max_local_size, 3), chunk_size=256)
+        do_collective_read(tmp_path, (max_local_size, 3), buffer_size=256)
 
-def do_collective_write(tmp_path, max_local_size, chunk_size=None):
+def do_collective_write(tmp_path, max_local_size, buffer_size=None):
     """
     Write out a dataset in collective mode, read it back in serial mode
     then gather on rank zero to check that the contents are correct.
+
+    Repeats test with different compression options.
     """
 
-    from mpi4py import MPI
-    comm = MPI.COMM_WORLD
-    comm_rank = comm.Get_rank()
-    comm_size = comm.Get_size()
+    no_compression     = {}
+    gzip_chunk         = {"gzip" : 6, "chunk" : buffer_size}
+    gzip_shuffle_chunk = {"gzip" : 6, "chunk" : buffer_size, "shuffle" : True}
 
-    # If max_local_size is an int, make it a single element tuple
-    try:
-        max_local_size = tuple([int(i) for i in max_local_size])
-    except TypeError:
-        max_local_size = (int(max_local_size),)
+    for compression in (no_compression, gzip_chunk, gzip_shuffle_chunk):
 
-    # Where to write the test file
-    filepath = tmp_path / f"collective_read_test_{max_local_size}.hdf5"
-    filepath = comm.bcast(filepath)
+        from mpi4py import MPI
+        comm = MPI.COMM_WORLD
+        comm_rank = comm.Get_rank()
+        comm_size = comm.Get_size()
 
-    # Generate the test data
-    if max_local_size[0] > 0:
-        n_local = np.random.randint(max_local_size[0])
-    else:
-        n_local = 0
-    arr_local = np.random.uniform(low=-1.0e6, high=1.0e6, size=(n_local,)+max_local_size[1:])
-    
-    # Write out the data in collective mode
-    with h5py.File(filepath, "w", driver="mpio", comm=comm) as outfile:
-        phdf5.collective_write(outfile, "data", arr_local, comm, chunk_size)
-    comm.barrier()
+        # If max_local_size is an int, make it a single element tuple
+        try:
+            max_local_size = tuple([int(i) for i in max_local_size])
+        except TypeError:
+            max_local_size = (int(max_local_size),)
 
-    # Gather data on rank zero and check
-    arr = comm.gather(arr_local)
-    if comm_rank == 0:
-        arr = np.concatenate(arr)
-        with h5py.File(filepath, "r") as infile:
-            arr_check = infile["data"][...]
-        all_equal = np.all(arr==arr_check)
-    else:
-        all_equal = None
-    all_equal = comm.bcast(all_equal)
+        # Where to write the test file
+        filepath = tmp_path / f"collective_read_test_{max_local_size}.hdf5"
+        filepath = comm.bcast(filepath)
 
-    assert all_equal, "Collective write returned incorrect data"
+        # Generate the test data
+        if max_local_size[0] > 0:
+            n_local = np.random.randint(max_local_size[0])
+        else:
+            n_local = 0
+        arr_local = np.random.uniform(low=-1.0e6, high=1.0e6, size=(n_local,)+max_local_size[1:])
+
+        # Write out the data in collective mode
+        with h5py.File(filepath, "w", driver="mpio", comm=comm) as outfile:
+            phdf5.collective_write(outfile, "data", arr_local, comm, buffer_size, **compression)
+        comm.barrier()
+
+        # Gather data on rank zero and check
+        arr = comm.gather(arr_local)
+        if comm_rank == 0:
+            arr = np.concatenate(arr)
+            with h5py.File(filepath, "r") as infile:
+                arr_check = infile["data"][...]
+            all_equal = np.all(arr==arr_check)
+        else:
+            all_equal = None
+        all_equal = comm.bcast(all_equal)
+
+        assert all_equal, "Collective write returned incorrect data"
+
 
 @pytest.mark.mpi
 def test_collective_write_empty(tmp_path):
@@ -162,7 +171,7 @@ def test_collective_write_small_chunks_1d(tmp_path):
     Test collective writes of various size 1D datasets
     """
     for max_local_size in (1, 10, 100, 1000, 10000, 100000):
-        do_collective_write(tmp_path, max_local_size, chunk_size=256)
+        do_collective_write(tmp_path, max_local_size, buffer_size=256)
 
 @pytest.mark.mpi
 def test_collective_write_2d(tmp_path):
@@ -178,7 +187,7 @@ def test_collective_write_small_chunks_2d(tmp_path):
     Test collective writes of various size 2D datasets
     """
     for max_local_size in (1, 10, 100, 1000, 10000, 100000):
-        do_collective_write(tmp_path, (max_local_size,3), chunk_size=256)
+        do_collective_write(tmp_path, (max_local_size,3), buffer_size=256)
 
 def create_multi_file_output(tmp_path, basename, nr_files, elements_per_file,
                              group=None, have_missing=False, attrs=None):
@@ -434,7 +443,7 @@ def test_multi_file_one_file_per_rank_group(tmp_path):
                            group="group")
 
 def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename, have_missing=False, group=None,
-                          filename_method="attribute"):
+                          filename_method="attribute", compression=None):
     """
     Check that writing out a distributed array to a file set
     then reading it back in preserves the values.
@@ -443,6 +452,9 @@ def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename, have_
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
     comm_size = comm.Get_size()
+
+    if compression is None:
+        compression = {}
 
     # Sync path between ranks
     tmp_path = comm.bcast(tmp_path)
@@ -470,10 +482,10 @@ def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename, have_
     elements_per_file = mf.get_elements_per_file("data", group=group)
     filenames2 = str(tmp_path / f"{basename}.mf_write_test.%(file_nr)d.hdf5")
     if filename_method != "list":
-        mf.write({"data" : data}, elements_per_file, filenames2, "w", group=group)
+        mf.write({"data" : data}, elements_per_file, filenames2, "w", group=group, **compression)
     else:
         all_filenames = [filenames2 % {"file_nr" : i} for i in range(nr_files)]
-        mf.write({"data" : data}, elements_per_file, all_filenames, "w", group=group)
+        mf.write({"data" : data}, elements_per_file, all_filenames, "w", group=group, **compression)
 
     comm.barrier()
 
@@ -510,13 +522,21 @@ def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename, have_
     equal = comm.bcast(equal)
     assert equal, "Array written to file set did not round trip"
 
-def multi_file_round_trip_all_methods(tmp_path, nr_files, elements_per_file, basename, have_missing=False, group=None):
+def multi_file_round_trip_all_methods(tmp_path, nr_files, elements_per_file, basename,
+                                      have_missing=False, group=None):
     """
     Run multi file round trip test with different methods for generating filenames
+    and compression options
     """
+    compressions = (
+        {},
+        {"gzip" : 6, "chunk" : 10*1024},
+        {"gzip" : 6, "chunk" : 10*1024, "shuffle" : True},
+    )
     for filename_method in ("dataset", "attribute", "list"):
-        multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename+"_"+filename_method,
-                              have_missing, group, filename_method=filename_method)
+        for compression in compressions:
+            multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename+"_"+filename_method,
+                                  have_missing, group, filename_method=filename_method, compression=compression)
 
 @pytest.mark.mpi
 def test_round_trip_single_file(tmp_path):

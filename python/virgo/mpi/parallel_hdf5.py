@@ -3,11 +3,62 @@
 import collections
 
 import numpy as np
+import h5py
 import virgo.mpi.util
 
 # Default maximum size of I/O operations in bytes.
 # This is to avoid MPI issues with buffers >2GB.
-CHUNK_SIZE=100*1024*1024
+BUFFER_SIZE=100*1024*1024
+
+
+def compress_dcpl(dcpl, shape, gzip=None, shuffle=False, chunk=None):
+    """
+    Convenience function for enabling compression. Enables chunking along
+    first dimension if necessary. Returns a new, updated property list and
+    leaves the input property list unchanged.
+
+    Note that using romio from openmpi v4 can cause segfaults when writing
+    compressed datasets in parallel (see
+    https://github.com/open-mpi/ompi/issues/7795).
+    """
+
+    dcpl = dcpl.copy()
+
+    # Skip compression and chunking of parallel I/O for HDF5 before 1.12.0
+    if h5py.version.hdf5_version_tuple < (1,12,0):
+        return dcpl
+
+    # Find total number of elements
+    nr_elements = 1
+    for n in shape:
+        nr_elements *= n
+
+    # Don't chunk or compress zero size datasets
+    if nr_elements == 0:
+        return
+
+    # Set a default chunk size
+    if chunk is None:
+        chunk_size = 8*1024*1024
+    else:
+        chunk_size = int(chunk)
+
+    # Enable chunking if necessary
+    if gzip is not None or shuffle:
+        if dcpl.get_layout() != h5py.h5d.CHUNKED:
+            chunk_shape = list(shape)
+            if chunk_shape[0] > chunk_size:
+                chunk_shape[0] = chunk_size
+            dcpl.set_layout(h5py.h5d.CHUNKED)
+            dcpl.set_chunk(tuple(chunk_shape))
+        
+    # Enable compression
+    if shuffle:
+        dcpl.set_shuffle()
+    if gzip is not None:
+        dcpl.set_deflate(gzip)
+
+    return dcpl
 
 
 class AttributeArray(np.ndarray):
@@ -24,7 +75,7 @@ class AttributeArray(np.ndarray):
         self.attrs = getattr(obj, 'attrs', None)
 
 
-def collective_read(dataset, comm, chunk_size=None):
+def collective_read(dataset, comm, buffer_size=None):
     """
     Do a parallel collective read of a HDF5 dataset by splitting
     the dataset equally between MPI ranks along its first axis.
@@ -32,8 +83,8 @@ def collective_read(dataset, comm, chunk_size=None):
     File must have been opened in MPI mode.
     """
 
-    if chunk_size is None:
-        chunk_size = CHUNK_SIZE
+    if buffer_size is None:
+        buffer_size = BUFFER_SIZE
 
     # Avoid initializing HDF5 (and therefore MPI) until necessary
     import h5py
@@ -69,9 +120,9 @@ def collective_read(dataset, comm, chunk_size=None):
             element_size *= s
         local_nr_bytes = num_on_task[comm_rank] * element_size
         # Compute number of iterations this task needs
-        chunk_size_elements = chunk_size // element_size
-        local_nr_iterations = num_on_task[comm_rank] // chunk_size_elements
-        if num_on_task[comm_rank] % chunk_size_elements > 0:
+        buffer_size_elements = buffer_size // element_size
+        local_nr_iterations = num_on_task[comm_rank] // buffer_size_elements
+        if num_on_task[comm_rank] % buffer_size_elements > 0:
             local_nr_iterations += 1
         # Find maximum number of iterations over all tasks
         global_nr_iterations = comm.allreduce(local_nr_iterations, op=MPI.MAX)
@@ -84,7 +135,7 @@ def collective_read(dataset, comm, chunk_size=None):
         offset_in_file = offset_on_task[comm_rank]
         nr_left = num_on_task[comm_rank]
         for i in range(global_nr_iterations):
-            length = min(nr_left, chunk_size_elements)
+            length = min(nr_left, buffer_size_elements)
             with dataset.collective:
                 data[offset_in_mem:offset_in_mem+length,...] = dataset[offset_in_file:offset_in_file+length,...]
             offset_in_mem += length
@@ -94,7 +145,8 @@ def collective_read(dataset, comm, chunk_size=None):
     return data
 
 
-def collective_write(group, name, data, comm, chunk_size=None, create_dataset=True):
+def collective_write(group, name, data, comm, buffer_size=None, create_dataset=True,
+                     dcpl=None, gzip=None, shuffle=False, chunk=None):
     """
     Do a parallel collective write of a HDF5 dataset by concatenating
     contributions from MPI ranks along the first axis.
@@ -102,11 +154,18 @@ def collective_write(group, name, data, comm, chunk_size=None, create_dataset=Tr
     File must have been opened in MPI mode.
     """
 
-    if chunk_size is None:
-        chunk_size = CHUNK_SIZE
+    if buffer_size is None:
+        buffer_size = BUFFER_SIZE
 
     import h5py
     from mpi4py import MPI
+
+    # Get (or update) dataset creation property list
+    if create_dataset:
+        if dcpl is None:
+            dcpl = h5py.h5p.create(h5py.h5p.DATASET_CREATE)
+        else:
+            dcpl = dcpl.copy()
 
     # Ensure input is a contiguous numpy array
     data = np.ascontiguousarray(data)
@@ -140,7 +199,11 @@ def collective_write(group, name, data, comm, chunk_size=None, create_dataset=Tr
 
     # Create the dataset if necessary
     if create_dataset:
-        dataset = group.create_dataset(name, shape=full_shape, dtype=dtype_rank0)
+        dspace_id = h5py.h5s.create_simple(tuple(full_shape))
+        dtype_id = h5py.h5t.py_create(data.dtype)
+        dcpl_compressed = compress_dcpl(dcpl, full_shape, gzip, shuffle, chunk)
+        dataset_id = h5py.h5d.create(group.id, name.encode(), dtype_id, dspace_id, dcpl=dcpl_compressed)
+        dataset = h5py.Dataset(dataset_id)
     else:
         dataset = group[name]
 
@@ -153,7 +216,7 @@ def collective_write(group, name, data, comm, chunk_size=None, create_dataset=Tr
     element_size = data.dtype.itemsize
     for s in full_shape[1:]:
         element_size *= s
-    max_elements = chunk_size // element_size
+    max_elements = buffer_size // element_size
 
     # We need to use the low level interface here because the h5py high
     # level interface omits zero sized writes, which causes a hang in
@@ -575,7 +638,8 @@ class MultiFile:
 
         return elements_per_file
 
-    def _write_independent(self, data, elements_per_file, all_filenames, mode, group=None, attrs=None):
+    def _write_independent(self, data, elements_per_file, all_filenames, mode, group=None, attrs=None,
+                           dcpl=None, gzip=None, shuffle=False, chunk=None):
         """
         Write arrays to multiple files, assuming at least one file per MPI rank.
         """
@@ -586,6 +650,9 @@ class MultiFile:
         rank  = self.comm.Get_rank()
         first = self.first_file_on_rank[rank]
         num   = self.num_files_on_rank[rank]
+
+        if dcpl is None:
+            dcpl = h5py.h5p.create(h5py.h5p.DATASET_CREATE)
 
         offset = 0
         for i in range(first, first+num):
@@ -601,14 +668,21 @@ class MultiFile:
                 # Write the data
                 length = elements_per_file[self.all_file_indexes[i]]
                 for name in data:
-                    loc[name] = data[name][offset:offset+length,...]
+                    shape = tuple((length,)+data[name].shape[1:])
+                    dcpl_compressed = compress_dcpl(dcpl, shape, gzip, shuffle, chunk)
+                    dspace_id = h5py.h5s.create_simple(shape)
+                    dtype_id = h5py.h5t.py_create(data[name].dtype)
+                    dataset_id = h5py.h5d.create(loc.id, name.encode(), dtype_id, dspace_id, dcpl=dcpl_compressed)
+                    dataset = h5py.Dataset(dataset_id)
+                    dataset[...] = data[name][offset:offset+length,...]
                     if attrs is not None and name in attrs:
                         for attr_name, attr_val in attrs[name].items():
-                            loc[name].attrs[attr_name] = attr_val
+                            dataset.attrs[attr_name] = attr_val
 
                 offset += length
 
-    def _write_collective(self, data, elements_per_file, all_filenames, mode, group=None, attrs=None):
+    def _write_collective(self, data, elements_per_file, all_filenames, mode, group=None, attrs=None,
+                          dcpl=None, gzip=None, shuffle=False, chunk=None):
         """
         Write arrays to multiple files in collective mode.
         """
@@ -632,7 +706,8 @@ class MultiFile:
             length = elements_per_file[self.all_file_indexes[self.collective_file_nr]]
             assert length == data[name].shape[0]
             length_tot = comm.allreduce(length)
-            dataset = collective_write(loc, name, data[name], comm)
+            dataset = collective_write(loc, name, data[name], comm, dcpl=dcpl,
+                                       gzip=gzip, shuffle=shuffle, chunk=chunk)
             if attrs is not None and name in attrs:
                 for attr_name, attr_val in attrs[name].items():
                     dataset.attrs[attr_name] = attr_val
@@ -640,7 +715,8 @@ class MultiFile:
         outfile.close()
         comm.Free()
 
-    def write(self, data, elements_per_file, filenames, mode, group=None, attrs=None):
+    def write(self, data, elements_per_file, filenames, mode, group=None, attrs=None, dcpl=None,
+              gzip=None, shuffle=False, chunk=None):
         """
         Write out the supplied datasets with the same layout as the
         input. Use mode parameter to choose whether to create new
@@ -662,8 +738,10 @@ class MultiFile:
 
         if self.collective:
             # Collective mode
-            self._write_collective(data, elements_per_file, all_filenames, mode, group, attrs)
+            self._write_collective(data, elements_per_file, all_filenames, mode, group, attrs, dcpl,
+                                   gzip, shuffle, chunk)
         else:
             # Independent mode
-            self._write_independent(data, elements_per_file, all_filenames, mode, group, attrs)
+            self._write_independent(data, elements_per_file, all_filenames, mode, group, attrs, dcpl,
+                                    gzip, shuffle, chunk)
             
