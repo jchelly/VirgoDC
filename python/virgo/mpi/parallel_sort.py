@@ -891,3 +891,166 @@ def gather_to_first_rank(arr, comm):
         return np.concatenate(arr_g)
     else:
         return None
+
+
+def reduce_elements(arr, updates, index, op, comm=None):
+    """
+    Update the elements given by index of distributed array arr by
+    reducing them with the values in updates using MPI operator op.
+
+    For example, on one MPI rank with op=MPI.SUM this is equivalent
+    to
+
+    arr[index,...] += updates
+
+    On multiple MPI ranks the index is global and may refer to
+    elements of arr which are stored on other ranks.
+
+    For multidimensional arrays index is taken to refer to the first
+    dimension.
+
+    The operator may alternatively be a numpy ufunc. In this case
+    its at() method is used to apply the updates, which is likely to
+    be faster.
+    """
+
+    # Get communicator to use
+    from mpi4py import MPI
+    if comm is None:
+        comm = MPI.COMM_WORLD
+
+    # Ensure input indexes are an array of index_dtype
+    index = np.asarray(index, dtype=index_dtype)
+
+    # Check that index is 1D
+    if len(index.shape) != 1:
+        print("update_elements() - index must be one dimensional!")
+        comm.Abort()
+
+    # Check that we have the expected number of updates
+    if index.shape[0] != updates.shape[0]:
+        print("update_elements() - index and updates must have same first dimension!")
+        comm.Abort()
+
+    # Check that updates have the same shape as arr (except first dimension)
+    if updates.shape[1:] != arr.shape[1:]:
+        print("update_elements() - arr and updates have inconsistent shapes!")
+        comm.Abort()
+
+    # Find the range of global indexes of arr on each rank
+    local_offset = comm.scan(len(arr)) - len(arr)
+    local_length = len(arr)
+    all_local_offsets = np.asarray(comm.allgather(local_offset), dtype=index_dtype)
+    all_local_lengths = np.asarray(comm.allgather(local_length), dtype=index_dtype)
+
+    # Sort updates by destination index
+    order   = np.argsort(index)
+    index   = index[order]
+    updates = updates[order]
+    del order
+
+    # Find which rank each update needs to go to
+    send_offset = np.searchsorted(index, all_local_offsets, side="left")
+    send_count = np.zeros_like(send_offset)
+    send_count[:-1] = send_offset[1:] - send_offset[:-1]
+    send_count[-1] = len(index) - send_offset[-1]
+    assert sum(send_count) == len(index)
+
+    # Compute send and receive counts
+    send_displ = np.cumsum(send_count) - send_count
+    recv_count = np.ndarray(comm.Get_size(), dtype=index_dtype)
+    comm.Alltoall(send_count, recv_count)
+    recv_displ = np.cumsum(recv_count) - recv_count
+
+    # Exchange indexes to update
+    index_recv = np.empty_like(index, shape=sum(recv_count))
+    my_alltoallv(index,      send_count, send_displ,
+                 index_recv, recv_count, recv_displ,
+                 comm=comm)
+
+    # Compute number of values per index (in case of multidimensional input)
+    nvalues = 1
+    for s in updates.shape[1:]:
+        nvalues *= s
+
+    # Exchange updates
+    recv_shape = (sum(recv_count),) + updates.shape[1:]
+    updates_recv = np.empty_like(updates, shape=recv_shape)
+    my_alltoallv(updates.reshape((-1,)),      nvalues*send_count, nvalues*send_displ,
+                 updates_recv.reshape((-1,)), nvalues*recv_count, nvalues*recv_displ,
+                 comm=comm)
+
+    # Convert received array indexes to local indexes
+    index_recv -= local_offset
+    assert np.all(index_recv >= 0)
+    assert np.all(index_recv <= len(arr))
+
+    # Apply updates to the local array elements
+    if isinstance(op, np.ufunc):
+        # op is a numpy ufunc
+        op.at(arr, index_recv, updates_recv)
+    else:
+        # op is an MPI operator
+        for i, j in enumerate(index_recv):
+            op.Reduce_local(updates_recv[i,...], arr[j,...])
+
+
+def parallel_bincount(x, weights=None, minlength=None, result=None, comm=None):
+    """
+    Parallel version of numpy.bincount where input and output are
+    distributed arrays.
+    """
+
+    # Get communicator to use
+    from mpi4py import MPI
+    if comm is None:
+        comm = MPI.COMM_WORLD
+    comm_size = comm.Get_size()
+    comm_rank = comm.Get_rank()
+
+    # Ensure inputs are arrays
+    x = np.asanyarray(x)
+    if weights is not None:
+        weights = np.asanyarray(weights)
+    
+    # Input needs to be integer
+    if x.dtype.kind != "i" and x.dtype.kind != "u":
+        raise ValueError("Input array x must be an integer type")
+
+    # Determine output array data type
+    if result is not None:
+        result_dtype = result.dtype
+    elif weights is not None:
+        result_dtype = weights.dtype
+    else:
+        result_dtype = index_dtype
+
+    # Find the maximum value in x
+    x_max = np.amax(x) if len(x) > 0 else 0
+    x_max = comm.allreduce(x_max, op=MPI.MAX)
+    total_nr_bins = x_max+1
+
+    # Find total number of bins needed
+    if minlength is not None:
+        total_nr_bins = int(max(total_nr_bins, minlength))
+
+    # Allocate result, if necessary
+    if result is None:
+        # Need to decide how to distribute result array if it wasn't provided
+        local_nr_bins = total_nr_bins // comm_size
+        if comm_rank < total_nr_bins % comm_size:
+            local_nr_bins += 1
+        result = np.zeros(local_nr_bins, dtype=result_dtype)
+    else:
+        # Just check result array is large enough
+        if comm.allreduce(len(result)) < total_nr_bins:
+            raise ValueError("Result array is too small")
+    
+    # If no weights are specified, set all to 1
+    if weights is None:
+        weights = np.ones(len(x), dtype=index_dtype)
+
+    # Accumulate weights
+    reduce_elements(result, weights, x, op=np.add, comm=comm)
+
+    return result
