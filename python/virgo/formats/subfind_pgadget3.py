@@ -412,7 +412,6 @@ class GroupCatalogue(Mapping):
             yield key
 
 
-
 class GroupOrderedSnapshot():
     """
     Class for reading fof groups and subhalos from a snapshot
@@ -441,53 +440,19 @@ class GroupOrderedSnapshot():
         self.basename   = basename
         self.isnap      = isnap
 
+        # Read the group catalogue
+        datasets = ("GroupLen", "GroupOffset", "SubLen", "SubOffset")
+        self.cat = GroupCatalogue(basedir, isnap, datasets,
+                                  SO_VEL_DISPERSIONS, SO_BAR_INFO,
+                                  WRITE_SUB_IN_SNAP_FORMAT,
+                                  id_bytes, float_bytes)
+
         # Store file format info
         self.SO_VEL_DISPERSIONS = SO_VEL_DISPERSIONS
         self.SO_BAR_INFO        = SO_BAR_INFO
         self.WRITE_SUB_IN_SNAP_FORMAT = WRITE_SUB_IN_SNAP_FORMAT
         self.id_bytes           = id_bytes
         self.float_bytes        = float_bytes
-
-        # Read group lengths from all files
-        self.foflen = []
-        self.sublen = []
-        self.firstsub = []
-        self.nsubs  = []
-        ifile  = 0
-        nfiles = 1
-        while ifile < nfiles:
-
-            # Open file and get number of files
-            sub = self.open_subtab_file(ifile)
-            if ifile == 0:
-                nfiles = sub["NTask"][...]
-
-            # Read group lengths
-            nfof = sub["Ngroups"][...]
-            if nfof > 0:
-                self.foflen.append(sub["GroupLen"][...])
-                self.nsubs.append(sub["Nsubs"][...])
-                self.firstsub.append(sub["FirstSub"][...])
-            nsub = sub["Nsubgroups"][...]
-            if nsub > 0:
-                self.sublen.append(sub["SubLen"][...])
-
-            # Store number of groups in each file
-            if ifile == 0:
-                self.nfof_file = -np.ones(nfiles, dtype=np.int32)
-                self.nsub_file = -np.ones(nfiles, dtype=np.int32)
-            self.nfof_file[ifile] = nfof
-            self.nsub_file[ifile] = nsub
-
-            ifile += 1
-            
-        self.foflen   = np.concatenate(self.foflen,   axis=0)
-        self.nsubs    = np.concatenate(self.nsubs,    axis=0)
-        self.firstsub = np.concatenate(self.firstsub, axis=0)
-        self.sublen   = np.concatenate(self.sublen,   axis=0)
-
-        # Calculate offset to each fof group
-        self.fof_offset = np.cumsum(self.foflen, dtype=np.int64, axis=0) - self.foflen
 
         # Find number of snapshot files in this snapshot
         snap = self.open_snap_file(0)
@@ -497,9 +462,6 @@ class GroupOrderedSnapshot():
         # Find total particle number
         nptot = (snap["Header"].attrs["NumPart_Total"].astype(np.int64) + 
                  (snap["Header"].attrs["NumPart_Total_HighWord"].astype(np.int64) << 32))
-
-        # Calculate index of first fof group in each file
-        self.first_fof_in_file = np.cumsum(self.nfof_file) - self.nfof_file
 
     def open_snap_file(self, ifile):
         """
@@ -520,32 +482,19 @@ class GroupOrderedSnapshot():
                           SO_BAR_INFO=self.SO_BAR_INFO,
                           WRITE_SUB_IN_SNAP_FORMAT=self.WRITE_SUB_IN_SNAP_FORMAT)
 
-    def read_fof_group(self, grnr):
+    def read_particle_range(self, offset, count, datasets=None):
         """
-        Read pos, vel, id for particles in the specified FoF group
-
-        grnr can either be a single integer giving the position of the group
-        in the full catalogue, or a two element sequence with the file number
-        and position relative to the start of that file
-
-        Returns a dictionary containing the Coordinates, Velocities
-        and ParticleIDs arrays.
+        Read count particles from the snapshot, starting at offset.
         """
+        if datasets is None:
+            datasets = ("Coordinates", "Velocities", "ParticleIDs")
+        result = {name : [] for name in datasets}
 
-        try:
-            ifof = int(grnr)
-        except TypeError:
-            filenum, fofnum = grnr
-            ifof = self.first_fof_in_file[filenum] + fofnum
+        # Find range of particles we want
+        first_particle = offset
+        last_particle = offset + count - 1
 
-        # Output will be a dictionary with Coordinates, ParticleIDs etc.
-        result = {}
-
-        # Determine which particles we need to read
-        first_in_fof = self.fof_offset[ifof]
-        last_in_fof  = first_in_fof + self.foflen[ifof] - 1
-        
-        # Now loop over snapshot files and read those we need
+        # Loop over snapshot files and read those we need
         first_in_snap = 0
         for ifile in range(self.num_snap_files):
             
@@ -556,66 +505,64 @@ class GroupOrderedSnapshot():
                 snap = self.open_snap_file(ifile)
                 self.npart_file[ifile] = snap["Header"].attrs["NumPart_ThisFile"][1]
 
-            # Check if any particles we need are in this file
-            last_in_snap = first_in_snap + self.npart_file[ifile]
-
-            # Loop over quantities to read
-            for dataset in ("Coordinates","Velocities","ParticleIDs"):
+            # Find index of last particle in this snapshot file
+            last_in_snap = first_in_snap + self.npart_file[ifile] - 1
                     
-                # Check if snapshot has particles of this type
-                if last_in_snap >= first_in_snap:
+            # Check if snapshot has particles of this type
+            if last_in_snap >= first_in_snap:
 
-                    # Find range of particles to read from this file
-                    first_to_read = first_in_fof - first_in_snap
-                    last_to_read  = last_in_fof  - first_in_snap
-                    if first_to_read < 0:
-                        first_to_read = 0
-                    if last_to_read >= self.npart_file[ifile]:
-                        last_to_read = self.npart_file[ifile] - 1
+                # Find range of particles to read from this file
+                first_to_read = first_particle - first_in_snap
+                last_to_read  = last_particle  - first_in_snap
+                if first_to_read < 0:
+                    first_to_read = 0
+                if last_to_read >= self.npart_file[ifile]:
+                    last_to_read = self.npart_file[ifile] - 1
 
-                    # Read the particles, if there are any in this file
-                    if last_to_read >= first_to_read and self.npart_file[ifile] > 0:
+                # Read the particles, if there are any in this file
+                if last_to_read >= first_to_read and self.npart_file[ifile] > 0:
 
-                        # May not have opened the snapshot yet
-                        if snap is None:
-                            snap = self.open_snap_file(ifile)
+                    # May not have opened the snapshot yet
+                    if snap is None:
+                        snap = self.open_snap_file(ifile)
 
-                        # Read in the data
-                        if dataset not in result:
-                            result[dataset] = []
+                    # Read in the data
+                    for dataset in datasets:
                         result[dataset].append(snap["PartType%d/%s" % (1, dataset)][first_to_read:last_to_read+1,...])
 
             # Check if we're done
-            if last_in_snap >= last_in_fof:
+            if last_in_snap >= last_particle:
                 break
 
-            # Advance to next file
+            # Advance to the next file
             first_in_snap += self.npart_file[ifile]
 
         # Concatenate arrays read from each file
         for dataset in result.keys():
             result[dataset] = np.concatenate(result[dataset], axis=0)
 
-        # Now calculate which subfind group each particle belongs to
-        if "ParticleIDs" in list(result.keys()):
-
-            # Initialise array to -1 to indicate not in a subgroup
-            n = result["ParticleIDs"].shape[0]
-            result["SubNr"] = -np.ones(n, dtype=np.int32)
-
-            # Check if we have any subgroups in this group
-            if self.nsubs[ifof] > 0:
-
-                # Find range of subgroups in this group
-                first_sub = self.firstsub[ifof]
-                last_sub  = first_sub + self.nsubs[ifof] - 1
-
-                # Make array with subgroup number for each particle in these subgroups
-                sublen = self.sublen[first_sub:last_sub+1]
-                subnr  = np.repeat(np.arange(sublen.shape[0], dtype=np.int32), sublen)
-                subnr += first_sub
-
-                # Update the part of the output array corresponding to these particles
-                result["SubNr"][0:subnr.shape[0]] = subnr
-
         return result
+
+    def read_fof_group(self, grnr, datasets=None):
+        """
+        Read pos, vel, id for particles in the specified FoF group
+
+        Returns a dictionary containing the Coordinates, Velocities
+        and ParticleIDs arrays.
+        """
+
+        offset = self.cat["GroupOffset"][grnr]
+        count = self.cat["GroupLen"][grnr]
+        return self.read_particle_range(offset, count, datasets)
+
+    def read_subfind_group(self, subnr, datasets=None):
+        """
+        Read pos, vel, id for particles in the specified subfind group
+
+        Returns a dictionary containing the Coordinates, Velocities
+        and ParticleIDs arrays.
+        """
+
+        offset = self.cat["SubOffset"][subnr]
+        count = self.cat["SubLen"][subnr]
+        return self.read_particle_range(offset, count, datasets)
