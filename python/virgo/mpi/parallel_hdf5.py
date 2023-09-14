@@ -11,6 +11,25 @@ import virgo.mpi.util
 BUFFER_SIZE=100*1024*1024
 
 
+def substitute_file_nr(format_string, file_nr):
+    """
+    Substitute the file_nr parameter into the supplied format string.
+    Allows either % or f-string style formatting.
+    """
+
+    str1 = format_string % {"file_nr" : file_nr}
+    str2 = format_string.format(file_nr=file_nr)
+    if str1 != format_string and str2 != format_string:
+        raise RuntimeError(f"Can't determine formatting type for {format_string}")
+    elif str1 != format_string:
+        return str1
+    elif str2 != format_string:
+        return str2
+    else:
+        assert str1==str2
+        return str1
+
+
 def compress_dcpl(dcpl, shape, gzip=None, shuffle=False, chunk=None):
     """
     Convenience function for enabling compression. Enables chunking along
@@ -312,7 +331,7 @@ class MultiFile:
             if file_idx is None:
                 # File indexes not specified, so read number of files from the first file
                 if comm_rank == 0:
-                    filename = filenames % {"file_nr":0}
+                    filename = substitute_file_nr(filenames, 0)
                     with h5py.File(filename, "r") as infile:
                         if file_nr_attr is not None:
                             obj, attr = file_nr_attr
@@ -326,7 +345,7 @@ class MultiFile:
                 else:
                     file_idx = None
                 file_idx = comm.bcast(file_idx)
-            self.filenames = [filenames % {"file_nr":i} for i in file_idx]
+            self.filenames = [substitute_file_nr(filenames, i) for i in file_idx]
             self.all_file_indexes = file_idx
 
         elif isinstance(filenames, collections.abc.Sequence):
@@ -726,7 +745,7 @@ class MultiFile:
         # Determine if we have a list of filenames or a single format string
         if isinstance(filenames, str):
             # filenames is a format string. Substitute in the file indexes.
-            all_filenames = [filenames % {"file_nr" : i} for i in self.all_file_indexes]
+            all_filenames = [substitute_file_nr(filenames, i) for i in self.all_file_indexes]
         elif isinstance(filenames, collections.abc.Sequence):
             # filenames is a list of filenames
             all_filenames = [str(fn) for fn in filenames]
