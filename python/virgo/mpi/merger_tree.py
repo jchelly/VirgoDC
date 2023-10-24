@@ -1,5 +1,7 @@
 #!/bin/env python
 
+import numpy as np
+
 import virgo.mpi.parallel_sort as psort
 
 
@@ -74,7 +76,7 @@ def match_halos(grnr1, ids1, grnr2, ids2, local_nr_halos, comm=None):
     # Compute number of pairs to send to each rank
     send_count = np.bincount(destination, minlength=comm_size)
     send_offset = np.cumsum(send_count) - send_count
-    recv_count = np.ndarray_like(send_count)
+    recv_count = np.empty_like(send_count)
     comm.Alltoall(send_count, recv_count)
     recv_offset = np.cumsum(recv_count) - recv_count
 
