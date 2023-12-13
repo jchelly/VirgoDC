@@ -125,7 +125,7 @@ def match_halos(grnr1, ids1, grnr2, ids2, local_nr_halos, comm=None):
     return psort.repartition(matched_grnr2, ndesired=ndesired, comm=comm)
 
 
-def consistent_match(match_index_12, match_index_21):
+def consistent_match(match_index_12, match_index_21, comm=None):
     """
     For each halo in catalogue 1, determine if its match in catalogue 2
     points back at it.
@@ -139,6 +139,11 @@ def consistent_match(match_index_12, match_index_21):
     Returns an array with 1 for a match and 0 otherwise.
     """
 
+    # Get communicator to use
+    from mpi4py import MPI
+    if comm is None:
+        comm = MPI.COMM_WORLD
+    
     # Find the global array indexes of halos stored on this rank
     nr_local_halos = len(match_index_12)
     local_halo_offset = comm.scan(nr_local_halos) - nr_local_halos
