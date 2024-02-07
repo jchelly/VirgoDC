@@ -66,7 +66,10 @@ def match_halos(grnr1, ids1, grnr2, ids2, local_nr_halos, comm=None):
     # the last rank gets any extra.
     total_nr_halos = comm.allreduce(local_nr_halos)
     halos_per_rank = total_nr_halos // comm_size
-    destination = np.clip(unique_grnr["grnr1"] // halos_per_rank, a_min=None, a_max=comm_size-1)
+    if halos_per_rank > 0:
+        destination = np.clip(unique_grnr["grnr1"] // halos_per_rank, a_min=None, a_max=comm_size-1)
+    else:
+        destination = np.ones(len(unique_grnr["grnr1"]), dtype=int) * (comm_size-1)
     local_size = halos_per_rank
     if comm_rank == comm_size - 1:
         local_size += total_nr_halos % comm_size
