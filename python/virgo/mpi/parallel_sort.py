@@ -1050,7 +1050,18 @@ def parallel_bincount(x, weights=None, minlength=None, result=None, comm=None):
     if weights is None:
         weights = np.ones(len(x), dtype=index_dtype)
 
-    # Accumulate weights
-    reduce_elements(result, weights, x, op=np.add, comm=comm)
+    # Sort values and weights
+    order = np.argsort(x)
+    x = x[order]
+    weights = weights[order]
+        
+    # Now combine local elements
+    unique_x, unique_indices, unique_counts = np.unique(x, return_index=True, return_counts=True)
+    unique_weights = np.empty_like(weights, shape=unique_x.shape)
+    for i, (offset, length) in enumerate(zip(unique_indices, unique_counts)):
+        unique_weights[i] = np.sum(weights[offset:offset+length])
+    
+    # Accumulate weights over all MPI ranks
+    reduce_elements(result, unique_weights, unique_x, op=np.add, comm=comm)
 
     return result
