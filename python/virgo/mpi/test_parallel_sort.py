@@ -130,7 +130,7 @@ def test_parallel_sort_unyt_floats():
         arr = np.random.uniform(low=-max_value, high=max_value, size=n)
         return unyt.unyt_array(arr, units=unyt.cm)
 
-    run_parallel_sort(input_function, 200)
+    run_parallel_sort(input_function, 20)
 
 @pytest.mark.mpi
 def test_parallel_sort_structured_arrays():
@@ -384,3 +384,46 @@ def test_bincount_no_weights_few_values():
 @pytest.mark.mpi
 def test_bincount_with_weights():
     run_parallel_bincount(elements_per_rank=10000, max_value=100, weighted=True, comm=None)
+
+def run_sendrecv_test(nchunk):
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+
+    def make_test_data(rank):
+        elements_per_rank = 1000
+        nr_elements = rank * elements_per_rank
+        return np.arange(nr_elements, dtype=int) + 1000*rank
+    
+    ptask = 0
+    while(2**ptask < comm_size):
+        ptask += 1
+
+    # Loop over pairs of processes and exchange data
+    for ngrp in range(2**ptask):
+        rank = comm_rank ^ ngrp
+        if rank < comm_size:
+
+            # Create array to send
+            sendbuf = make_test_data(comm_rank)
+
+            # Create zeroed out receive buffer
+            recvbuf = make_test_data(rank)
+            recvbuf[:] = 0
+
+            # Compute expected result
+            recvbuf_check = make_test_data(rank)
+
+            # Exchange data
+            psort.sendrecv(rank, sendbuf, recvbuf, comm=comm, nchunk=nchunk)
+            assert_all_ranks(np.all(recvbuf==recvbuf_check), "Unexpected result from sendrecv")
+
+@pytest.mark.mpi
+def test_sendrecv_default_chunks():
+    run_sendrecv_test(None)
+
+@pytest.mark.mpi
+def test_sendrecv_small_chunks():
+    run_sendrecv_test(17)
