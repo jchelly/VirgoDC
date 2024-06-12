@@ -8,8 +8,31 @@ import time
 import sys
 import gc
 
+import virgo.util.match
+
 # Type to use for global indexes
 index_dtype = np.int64
+
+
+def hypercube_neighbours(comm=None):
+    """
+    Return indexes of all MPI ranks in the supplied communicator in an
+    order which can be used for alltoall type communications.
+    """
+    
+    if comm is None:
+        comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+    
+    ptask = 0
+    while(2**ptask < comm_size):
+        ptask += 1
+
+    for ngrp in range(2**ptask):
+        rank = comm_rank ^ ngrp
+        if rank < comm_size:
+            yield rank
 
 
 def mpi_datatype(dtype):
@@ -793,35 +816,37 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
     send_count = send_count_all
     send_displ = send_displ_all
 
-    # Transfer the data
+    # Determine amount of data to receive from each rank
     recv_count = np.ndarray(comm_size, dtype=index_dtype)
     comm.Alltoall(send_count, recv_count)
-    recv_displ = np.cumsum(recv_count) - recv_count
-    arr1_recv = np.ndarray(np.sum(recv_count), dtype=arr1.dtype)
-    my_alltoallv(arr1_ls,   send_count, send_displ,
-                 arr1_recv, recv_count, recv_displ,
-                 comm=comm)
-    del arr1_ls
 
-    # For each imported arr1 element, find global rank of matching arr2 element
-    ptr = np.searchsorted(arr2_ordered, arr1_recv, side="left")
-    ptr[ptr<0] = 0
-    ptr[ptr>=arr2_ordered.shape[0]] = 0 
-    ptr[arr2_ordered[ptr] != arr1_recv] = -1
-    del arr1_recv
-    del arr2_ordered
-    index_return = -np.ones(ptr.shape, dtype=index_dtype)
-    index_return[ptr>=0] = index_in[ptr[ptr>=0]]
-    del index_in
-    del ptr
+    #
+    # Loop over MPI ranks to communicate with
+    #
+    # Here, each MPI rank has identified the range of its local arr1
+    # values which might be found in each other rank's arr2. We send the
+    # arr1 values to the other rank, it checks them against its arr2
+    # values and then it returns the global index of any matching elements.
+    #
+    for dest in hypercube_neighbours(comm):
 
-    # Return the index info
-    index_out = np.zeros(arr1.shape, dtype=index_dtype) - 1
-    my_alltoallv(index_return, recv_count, recv_displ,
-                 index_out,    send_count, send_displ,
-                 comm=comm)
-    del index_return
+        # Exchange data with this other rank
+        arr1_send = arr1_ls[send_displ[dest]:send_displ[dest]+send_count[dest]]
+        arr1_recv = np.ndarray(recv_count[dest], dtype=arr1_ls.dtype)
+        sendrecv(dest, arr1_send, arr1_recv, comm=comm)
 
+        # For each imported arr1 element, find global rank of the matching arr2 element
+        ptr = virgo.util.match(arr1_recv, arr2_ordered, arr2_sorted=True)        
+        del arr1_recv
+        index_return = -np.ones(ptr.shape, dtype=index_dtype)
+        index_return[ptr>=0] = index_in[ptr[ptr>=0]]
+        del ptr
+
+        # Return the result
+        index_recv = index_out[send_displ[dest]:send_displ[dest]+send_count[dest]]
+        sendrecv(dest, index_return, index_recv, comm=comm)
+        del index_return
+    
     # Restore original order
     index = np.empty_like(index_out)
     index[idx] = index_out
