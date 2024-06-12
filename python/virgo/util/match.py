@@ -16,6 +16,10 @@ def match(arr1, arr2, arr2_sorted=False, arr2_index=None):
     It is assumed that each element in arr1 only occurs once in arr2.
     """
 
+    # Check for the case where we're searching an empty arr2 - can't be any matches
+    if len(arr2) == 0:
+        return -ones(len(arr1), dtype=int)
+    
     # Workaround for a numpy bug (<=1.4): ensure arrays are native endian
     # because searchsorted ignores endian flag
     if not(arr1.dtype.isnative):
