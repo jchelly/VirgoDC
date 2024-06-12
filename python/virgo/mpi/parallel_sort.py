@@ -820,6 +820,9 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
     recv_count = np.ndarray(comm_size, dtype=index_dtype)
     comm.Alltoall(send_count, recv_count)
 
+    # Allocate array for the result
+    index_out = np.zeros(arr1.shape, dtype=index_dtype) - 1
+
     #
     # Loop over MPI ranks to communicate with
     #
@@ -836,7 +839,7 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
         sendrecv(dest, arr1_send, arr1_recv, comm=comm)
 
         # For each imported arr1 element, find global rank of the matching arr2 element
-        ptr = virgo.util.match(arr1_recv, arr2_ordered, arr2_sorted=True)        
+        ptr = virgo.util.match.match(arr1_recv, arr2_ordered, arr2_sorted=True)        
         del arr1_recv
         index_return = -np.ones(ptr.shape, dtype=index_dtype)
         index_return[ptr>=0] = index_in[ptr[ptr>=0]]
