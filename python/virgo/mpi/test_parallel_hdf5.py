@@ -6,6 +6,13 @@ import h5py
 import virgo.mpi.parallel_hdf5 as phdf5
 import virgo.mpi.parallel_sort as psort
 
+# Ensure a different random seed on each MPI rank
+from mpi4py import MPI
+comm = MPI.COMM_WORLD
+comm_rank = comm.Get_rank()
+np.random.seed(comm_rank)
+
+
 def do_collective_read(tmp_path, max_local_size, buffer_size=None):
     """
     Write out a dataset in serial mode, read it back in collective mode

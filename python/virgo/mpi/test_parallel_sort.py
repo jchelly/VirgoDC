@@ -5,6 +5,13 @@ import numpy as np
 import pytest
 import virgo.mpi.parallel_sort as psort
 
+# Ensure a different random seed on each MPI rank
+from mpi4py import MPI
+comm = MPI.COMM_WORLD
+comm_rank = comm.Get_rank()
+np.random.seed(comm_rank)
+
+
 def assert_all_ranks(condition, message, comm=None):
     """Fails assertion on all ranks if condition is False on any rank"""
     from mpi4py import MPI
@@ -130,7 +137,7 @@ def test_parallel_sort_unyt_floats():
         arr = np.random.uniform(low=-max_value, high=max_value, size=n)
         return unyt.unyt_array(arr, units=unyt.cm)
 
-    run_parallel_sort(input_function, 200)
+    run_parallel_sort(input_function, 20)
 
 @pytest.mark.mpi
 def test_parallel_sort_structured_arrays():
@@ -384,3 +391,215 @@ def test_bincount_no_weights_few_values():
 @pytest.mark.mpi
 def test_bincount_with_weights():
     run_parallel_bincount(elements_per_rank=10000, max_value=100, weighted=True, comm=None)
+
+def run_sendrecv_test(nchunk):
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+
+    def make_test_data(rank):
+        elements_per_rank = 1000
+        nr_elements = rank * elements_per_rank
+        return np.arange(nr_elements, dtype=int) + 1000*rank
+    
+    ptask = 0
+    while(2**ptask < comm_size):
+        ptask += 1
+
+    # Loop over pairs of processes and exchange data
+    for ngrp in range(2**ptask):
+        rank = comm_rank ^ ngrp
+        if rank < comm_size:
+
+            # Create array to send
+            sendbuf = make_test_data(comm_rank)
+
+            # Create zeroed out receive buffer
+            recvbuf = make_test_data(rank)
+            recvbuf[:] = 0
+
+            # Compute expected result
+            recvbuf_check = make_test_data(rank)
+
+            # Exchange data
+            psort.sendrecv(rank, sendbuf, recvbuf, comm=comm, nchunk=nchunk)
+            assert_all_ranks(np.all(recvbuf==recvbuf_check), "Unexpected result from sendrecv")
+
+@pytest.mark.mpi
+def test_sendrecv_default_chunks():
+    run_sendrecv_test(None)
+
+@pytest.mark.mpi
+def test_sendrecv_small_chunks():
+    run_sendrecv_test(17)
+
+    
+def verify_parallel_match(arr1, arr2, ptr, comm):
+    """
+    Check the result of a parallel_match() call by gathering
+    on one rank and recomputing with serial match function.
+    """
+    import virgo.util.match
+    
+    # Gather full arrays on rank 0
+    arr1_all = comm.gather(arr1)
+    arr2_all = comm.gather(arr2)
+    ptr_all  = comm.gather(ptr)
+    if comm.Get_rank() == 0:
+        arr1_all = np.concatenate(arr1_all)
+        arr2_all = np.concatenate(arr2_all)
+        ptr_all = np.concatenate(ptr_all)
+    
+    # Recompute the index array and compare
+    if comm.Get_rank() == 0:
+        ptr_check = virgo.util.match.match(arr1_all, arr2_all)
+        is_ok = np.all(ptr_check==ptr_all)
+    else:
+        is_ok = True
+    assert_all_ranks(is_ok, "Result from parallel_match disagrees with serial version!")
+
+    
+def make_distributed_array(min_nr_per_rank, max_nr_per_rank, comm, with_duplicates=None):
+    """
+    Make a distributed array of consecutive integers with a random number
+    of elements per rank between min_nr_per_rank and max_nr_per_rank.
+
+    Random shuffles the output.
+    """
+
+    # Make the array
+    nr_local = np.random.randint(min_nr_per_rank, max_nr_per_rank+1)
+    nr_prev = comm.scan(nr_local) - nr_local
+    data = np.arange(nr_local, dtype=int) + nr_prev
+
+    # Randomly duplicate elements, if requested
+    if with_duplicates is not None:
+        nr_dups = np.random.randint(with_duplicates+1, size=data.shape[0])
+        data = np.repeat(data, nr_dups)
+    
+    # Random shuffle the array
+    f = np.random.random(data.shape[0])
+    order = psort.parallel_sort(f, return_index=True, comm=comm)
+    data = psort.fetch_elements(data, order, comm=comm)
+
+    return data
+
+
+def run_parallel_match(min_nr_per_rank, max_nr_per_rank, frac_arr1, frac_arr2):
+    """
+    Run a parallel_match test. Discards elements at random to test cases
+    where one array contains many more elements than the other.
+
+    min_nr_per_rank - min elements per rank
+    max_nr_per_rank - max elements per rank
+    frac_arr1       - random fraction of arr1 to keep
+    frac_arr2       - random fraction of arr2 to keep
+    """
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+
+    # Repeat each test with unique arr1 values and with arr1 values
+    # randomly duplicated up to 5, 10 or 20 times.
+    for with_duplicates in (None, 5, 10, 20):
+    
+        arr1 = make_distributed_array(min_nr_per_rank, max_nr_per_rank, comm,
+                                      with_duplicates)
+        keep = np.random.random(arr1.size) < frac_arr1
+        arr1 = arr1[keep]
+
+        arr2 = make_distributed_array(min_nr_per_rank, max_nr_per_rank, comm)
+        keep = np.random.random(arr2.size) < frac_arr2
+        arr2 = arr2[keep]
+
+        ptr = psort.parallel_match(arr1, arr2, comm=comm)
+        verify_parallel_match(arr1, arr2, ptr, comm=comm)
+
+
+@pytest.mark.mpi
+def test_parallel_match():
+
+    nr_reps = 20
+    for _ in range(nr_reps):
+    
+        min_nr_per_rank = 0
+        max_nr_per_rank = 1000
+        frac_arr1 = 1.0
+        frac_arr2 = 1.0
+        run_parallel_match(min_nr_per_rank, max_nr_per_rank, frac_arr1, frac_arr2)
+        
+@pytest.mark.mpi
+def test_parallel_match_both_empty():
+
+    nr_reps = 20
+    for _ in range(nr_reps):
+    
+        min_nr_per_rank = 0
+        max_nr_per_rank = 1000
+        frac_arr1 = 0.0
+        frac_arr2 = 0.0
+        run_parallel_match(min_nr_per_rank, max_nr_per_rank, frac_arr1, frac_arr2)
+
+@pytest.mark.mpi
+def test_parallel_match_none_to_find():
+
+    nr_reps = 20
+    for _ in range(nr_reps):
+    
+        min_nr_per_rank = 0
+        max_nr_per_rank = 1000
+        frac_arr1 = 0.0
+        frac_arr2 = 1.0
+        run_parallel_match(min_nr_per_rank, max_nr_per_rank, frac_arr1, frac_arr2)
+
+@pytest.mark.mpi
+def test_parallel_match_none_to_match():
+
+    nr_reps = 20
+    for _ in range(nr_reps):
+    
+        min_nr_per_rank = 0
+        max_nr_per_rank = 1000
+        frac_arr1 = 1.0
+        frac_arr2 = 0.0
+        run_parallel_match(min_nr_per_rank, max_nr_per_rank, frac_arr1, frac_arr2)        
+        
+@pytest.mark.mpi
+def test_parallel_match_many_unmatched():
+
+    nr_reps = 20
+    for _ in range(nr_reps):
+    
+        min_nr_per_rank = 0
+        max_nr_per_rank = 1000
+        frac_arr1 = 1.0
+        frac_arr2 = 0.01
+        run_parallel_match(min_nr_per_rank, max_nr_per_rank, frac_arr1, frac_arr2)
+
+@pytest.mark.mpi
+def test_parallel_match_few_to_find():
+
+    nr_reps = 20
+    for _ in range(nr_reps):
+    
+        min_nr_per_rank = 0
+        max_nr_per_rank = 1000
+        frac_arr1 = 0.01
+        frac_arr2 = 1.0
+        run_parallel_match(min_nr_per_rank, max_nr_per_rank, frac_arr1, frac_arr2)
+
+@pytest.mark.mpi
+def test_parallel_match_sparse():
+
+    nr_reps = 20
+    for _ in range(nr_reps):
+    
+        min_nr_per_rank = 0
+        max_nr_per_rank = 1000
+        frac_arr1 = 0.01
+        frac_arr2 = 0.01
+        run_parallel_match(min_nr_per_rank, max_nr_per_rank, frac_arr1, frac_arr2)

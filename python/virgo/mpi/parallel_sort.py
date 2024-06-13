@@ -8,8 +8,31 @@ import time
 import sys
 import gc
 
+import virgo.util.match
+
 # Type to use for global indexes
 index_dtype = np.int64
+
+
+def hypercube_neighbours(comm=None):
+    """
+    Return indexes of all MPI ranks in the supplied communicator in an
+    order which can be used for alltoall type communications.
+    """
+    
+    if comm is None:
+        comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+    
+    ptask = 0
+    while(2**ptask < comm_size):
+        ptask += 1
+
+    for ngrp in range(2**ptask):
+        rank = comm_rank ^ ngrp
+        if rank < comm_size:
+            yield rank
 
 
 def mpi_datatype(dtype):
@@ -96,6 +119,54 @@ def my_argsort(arr):
     return np.argsort(arr, kind='mergesort')
 
 
+def sendrecv(dest, sendbuf, recvbuf, comm=None, nchunk=None):
+    """
+    Sendrecv implementation which splits communications where necessary.
+    Source and destination are assumed to be the same. Arrays must be 1D.
+    
+    dest    - other MPI rank to communicate with
+    sendbuf - array to send
+    recvbuf - array to receive into
+    comm    - communicator to use, defaults to MPI_COMM_WORLD
+    nchunk  - maximum number of elements per send (default 100MB)
+    """
+
+    # Get communicator to use
+    from mpi4py import MPI
+    if comm is None:
+        comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+    
+    # Get data types
+    mpi_type_send = mpi_datatype(sendbuf.dtype)
+    mpi_type_recv = mpi_datatype(recvbuf.dtype)
+    
+    # Maximum number of elements per message: avoid messages > 2GB
+    assert sendbuf.dtype == recvbuf.dtype
+    assert len(sendbuf.shape) == 1
+    assert len(recvbuf.shape) == 1
+    if nchunk is None:
+        nchunk = (100*1024*1024) // sendbuf.dtype.itemsize
+    
+    # Determine number of elements to send and receive
+    nr_send_left = sendbuf.shape[0]
+    nr_recv_left = comm.sendrecv(nr_send_left, dest=dest, source=dest)
+
+    # Transfer data until it has all been moved
+    send_offset = 0
+    recv_offset = 0
+    while (nr_send_left > 0) or (nr_recv_left > 0):
+        nr_send = min(nchunk, nr_send_left)
+        nr_recv = min(nchunk, nr_recv_left)
+        comm.Sendrecv(sendbuf[send_offset:send_offset+nr_send], dest,
+                      recvbuf=recvbuf[recv_offset:recv_offset+nr_recv],
+                      source=dest)
+        send_offset  += nr_send
+        nr_send_left -= nr_send
+        recv_offset  += nr_recv
+        nr_recv_left -= nr_recv
+    
 
 def repartition(arr, ndesired, comm=None):
     """Return the input arr repartitioned between processors"""
@@ -745,35 +816,100 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
     send_count = send_count_all
     send_displ = send_displ_all
 
-    # Transfer the data
+    # Determine amount of data to receive from each rank
     recv_count = np.ndarray(comm_size, dtype=index_dtype)
     comm.Alltoall(send_count, recv_count)
-    recv_displ = np.cumsum(recv_count) - recv_count
-    arr1_recv = np.ndarray(np.sum(recv_count), dtype=arr1.dtype)
-    my_alltoallv(arr1_ls,   send_count, send_displ,
-                 arr1_recv, recv_count, recv_displ,
-                 comm=comm)
-    del arr1_ls
 
-    # For each imported arr1 element, find global rank of matching arr2 element
-    ptr = np.searchsorted(arr2_ordered, arr1_recv, side="left")
-    ptr[ptr<0] = 0
-    ptr[ptr>=arr2_ordered.shape[0]] = 0 
-    ptr[arr2_ordered[ptr] != arr1_recv] = -1
-    del arr1_recv
-    del arr2_ordered
-    index_return = -np.ones(ptr.shape, dtype=index_dtype)
-    index_return[ptr>=0] = index_in[ptr[ptr>=0]]
-    del index_in
-    del ptr
-
-    # Return the index info
+    # Allocate array for the result
     index_out = np.zeros(arr1.shape, dtype=index_dtype) - 1
-    my_alltoallv(index_return, recv_count, recv_displ,
-                 index_out,    send_count, send_displ,
-                 comm=comm)
-    del index_return
 
+    # Get the size of arr2 on all ranks
+    arr2_size = np.asarray(comm.allgather(arr2_ordered.shape[0]), dtype=int)
+    
+    #
+    # Loop over MPI ranks to communicate with
+    #
+    # For each section of our local arr1 corresponding to a remote rank
+    # we have two options:
+    #
+    # 1. Send our arr1 to the remote rank and have it return indexes of matches
+    # 2. Receive the remote rank's arr2 and carry out matching locally
+    #
+    # Here we use whichever method minimizes the number of elements to move.
+    #
+    for dest in hypercube_neighbours(comm):
+
+        # Identify range in local sorted arr1 which might match arr2 on dest
+        arr1_local  = arr1_ls[send_displ[dest]:send_displ[dest]+send_count[dest]]
+
+        # Identify corresponding section of the output index array, which we
+        # will update on this iteration
+        index_local = index_out[send_displ[dest]:send_displ[dest]+send_count[dest]]
+
+        # Identify array sizes on this rank and on dest
+        nr_arr1_local = arr1_local.shape[0]
+        nr_arr1_dest  = recv_count[dest]
+        nr_arr2_local = arr2_ordered.shape[0]
+        nr_arr2_dest  = arr2_size[dest]
+
+        #
+        # If the local arr1 section is not larger than the remote
+        # arr2 then we'll send arr1 to the remote rank for matching.
+        #
+        # Determine if we're sending our arr1 to dest
+        send_arr1 = nr_arr1_local <= nr_arr2_dest
+
+        # Determine if dest is sending its arr1 to us
+        recv_arr1 = nr_arr1_dest <= nr_arr2_local
+
+        # Set up send and receive buffers for arr1
+        sendbuf_size = nr_arr1_local if send_arr1 else 0 
+        arr1_sendbuf = arr1_local[:sendbuf_size]
+        recvbuf_size = nr_arr1_dest if recv_arr1 else 0
+        arr1_recvbuf = np.ndarray(recvbuf_size, dtype=arr1_ls.dtype)
+        
+        # Exchange arr1 values
+        sendrecv(dest, arr1_sendbuf, arr1_recvbuf, comm=comm)
+
+        # Match received arr1 values against local arr2 and look up indexes of matches
+        ptr = virgo.util.match.match(arr1_recvbuf, arr2_ordered, arr2_sorted=True)
+        del arr1_recvbuf
+        index_sendbuf = -np.ones(ptr.shape, dtype=index_dtype)
+        index_sendbuf[ptr>=0] = index_in[ptr[ptr>=0]]
+
+        # Reverse exchange the result. Only have a result to receive if we sent
+        # a request.
+        index_recvbuf = index_local if send_arr1 else index_local[:0]
+        sendrecv(dest, index_sendbuf, index_recvbuf, comm=comm)
+        del index_sendbuf
+        
+        #
+        # If the local arr1 section is larger than the remote arr2 then we'll
+        # import the remote arr2 and corresponding indexes and do the matching
+        # locally.
+        #
+        # Set up send and receive buffers.
+        #
+        # If we received dest's arr1 then we do not need to send our arr2
+        # If we sent our arr1 to dest then we do not need to receive dest's arr2
+        #
+        sendbuf_size = 0 if recv_arr1 else nr_arr2_local
+        arr2_sendbuf  = arr2_ordered[:sendbuf_size]
+        index_sendbuf = index_in[:sendbuf_size]
+        recvbuf_size = 0 if send_arr1 else nr_arr2_dest
+        arr2_recvbuf  = np.ndarray(recvbuf_size, dtype=arr2_ordered.dtype)
+        index_recvbuf = np.ndarray(recvbuf_size, dtype=index_in.dtype)
+
+        # Exchange arr2 values and indexes
+        sendrecv(dest, arr2_sendbuf, arr2_recvbuf, comm=comm)
+        sendrecv(dest, index_sendbuf, index_recvbuf, comm=comm)
+
+        # We can now check if the imported arr2 values match our local arr1 section
+        ptr = virgo.util.match.match(arr1_local, arr2_recvbuf, arr2_sorted=True)
+        del arr2_recvbuf
+        index_local[ptr>=0] = index_recvbuf[ptr[ptr>=0]]
+        del index_recvbuf
+        
     # Restore original order
     index = np.empty_like(index_out)
     index[idx] = index_out
