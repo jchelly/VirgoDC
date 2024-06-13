@@ -872,7 +872,8 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
         sendrecv(dest, arr1_sendbuf, arr1_recvbuf, comm=comm)
 
         # Match received arr1 values against local arr2 and look up indexes of matches
-        ptr = virgo.util.match.match(arr1_recvbuf, arr2_ordered, arr2_sorted=True)        
+        ptr = virgo.util.match.match(arr1_recvbuf, arr2_ordered, arr2_sorted=True)
+        del arr1_recvbuf
         index_sendbuf = -np.ones(ptr.shape, dtype=index_dtype)
         index_sendbuf[ptr>=0] = index_in[ptr[ptr>=0]]
 
@@ -880,7 +881,8 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
         # a request.
         index_recvbuf = index_local if send_arr1 else index_local[:0]
         sendrecv(dest, index_sendbuf, index_recvbuf, comm=comm)
-
+        del index_sendbuf
+        
         #
         # If the local arr1 section is larger than the remote arr2 then we'll
         # import the remote arr2 and corresponding indexes and do the matching
@@ -903,8 +905,10 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
         sendrecv(dest, index_sendbuf, index_recvbuf, comm=comm)
 
         # We can now check if the imported arr2 values match our local arr1 section
-        ptr = virgo.util.match.match(arr1_local, arr2_recvbuf, arr2_sorted=True)        
+        ptr = virgo.util.match.match(arr1_local, arr2_recvbuf, arr2_sorted=True)
+        del arr2_recvbuf
         index_local[ptr>=0] = index_recvbuf[ptr[ptr>=0]]
+        del index_recvbuf
         
     # Restore original order
     index = np.empty_like(index_out)
