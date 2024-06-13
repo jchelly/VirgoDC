@@ -454,7 +454,7 @@ def verify_parallel_match(arr1, arr2, ptr, comm):
     assert_all_ranks(is_ok, "Result from parallel_match disagrees with serial version!")
 
     
-def make_distributed_array(min_nr_per_rank, max_nr_per_rank, comm):
+def make_distributed_array(min_nr_per_rank, max_nr_per_rank, comm, with_duplicates=None):
     """
     Make a distributed array of consecutive integers with a random number
     of elements per rank between min_nr_per_rank and max_nr_per_rank.
@@ -467,6 +467,11 @@ def make_distributed_array(min_nr_per_rank, max_nr_per_rank, comm):
     nr_prev = comm.scan(nr_local) - nr_local
     data = np.arange(nr_local, dtype=int) + nr_prev
 
+    # Randomly duplicate elements, if requested
+    if with_duplicates is not None:
+        nr_dups = np.random.randint(with_duplicates+1, size=data.shape[0])
+        data = np.repeat(data, nr_dups)
+    
     # Random shuffle the array
     f = np.random.random(data.shape[0])
     order = psort.parallel_sort(f, return_index=True, comm=comm)
@@ -491,16 +496,21 @@ def run_parallel_match(min_nr_per_rank, max_nr_per_rank, frac_arr1, frac_arr2):
     comm_rank = comm.Get_rank()
     comm_size = comm.Get_size()
 
-    arr1 = make_distributed_array(min_nr_per_rank, max_nr_per_rank, comm)
-    keep = np.random.random(arr1.size) < frac_arr1
-    arr1 = arr1[keep]
+    # Repeat each test with unique arr1 values and with arr1 values
+    # randomly duplicated up to 5, 10 or 20 times.
+    for with_duplicates in (None, 5, 10, 20):
+    
+        arr1 = make_distributed_array(min_nr_per_rank, max_nr_per_rank, comm,
+                                      with_duplicates)
+        keep = np.random.random(arr1.size) < frac_arr1
+        arr1 = arr1[keep]
 
-    arr2 = make_distributed_array(min_nr_per_rank, max_nr_per_rank, comm)
-    keep = np.random.random(arr2.size) < frac_arr2
-    arr2 = arr2[keep]
+        arr2 = make_distributed_array(min_nr_per_rank, max_nr_per_rank, comm)
+        keep = np.random.random(arr2.size) < frac_arr2
+        arr2 = arr2[keep]
 
-    ptr = psort.parallel_match(arr1, arr2, comm=comm)
-    verify_parallel_match(arr1, arr2, ptr, comm=comm)
+        ptr = psort.parallel_match(arr1, arr2, comm=comm)
+        verify_parallel_match(arr1, arr2, ptr, comm=comm)
 
 
 @pytest.mark.mpi
@@ -510,11 +520,11 @@ def test_parallel_match():
     for _ in range(nr_reps):
     
         min_nr_per_rank = 0
-        max_nr_per_rank = 10000
+        max_nr_per_rank = 1000
         frac_arr1 = 1.0
         frac_arr2 = 1.0
         run_parallel_match(min_nr_per_rank, max_nr_per_rank, frac_arr1, frac_arr2)
-
+        
 @pytest.mark.mpi
 def test_parallel_match_both_empty():
 
@@ -522,7 +532,7 @@ def test_parallel_match_both_empty():
     for _ in range(nr_reps):
     
         min_nr_per_rank = 0
-        max_nr_per_rank = 10000
+        max_nr_per_rank = 1000
         frac_arr1 = 0.0
         frac_arr2 = 0.0
         run_parallel_match(min_nr_per_rank, max_nr_per_rank, frac_arr1, frac_arr2)
@@ -534,7 +544,7 @@ def test_parallel_match_none_to_find():
     for _ in range(nr_reps):
     
         min_nr_per_rank = 0
-        max_nr_per_rank = 10000
+        max_nr_per_rank = 1000
         frac_arr1 = 0.0
         frac_arr2 = 1.0
         run_parallel_match(min_nr_per_rank, max_nr_per_rank, frac_arr1, frac_arr2)
@@ -546,7 +556,7 @@ def test_parallel_match_none_to_match():
     for _ in range(nr_reps):
     
         min_nr_per_rank = 0
-        max_nr_per_rank = 10000
+        max_nr_per_rank = 1000
         frac_arr1 = 1.0
         frac_arr2 = 0.0
         run_parallel_match(min_nr_per_rank, max_nr_per_rank, frac_arr1, frac_arr2)        
@@ -558,7 +568,7 @@ def test_parallel_match_many_unmatched():
     for _ in range(nr_reps):
     
         min_nr_per_rank = 0
-        max_nr_per_rank = 10000
+        max_nr_per_rank = 1000
         frac_arr1 = 1.0
         frac_arr2 = 0.01
         run_parallel_match(min_nr_per_rank, max_nr_per_rank, frac_arr1, frac_arr2)
@@ -570,7 +580,7 @@ def test_parallel_match_few_to_find():
     for _ in range(nr_reps):
     
         min_nr_per_rank = 0
-        max_nr_per_rank = 10000
+        max_nr_per_rank = 1000
         frac_arr1 = 0.01
         frac_arr2 = 1.0
         run_parallel_match(min_nr_per_rank, max_nr_per_rank, frac_arr1, frac_arr2)
@@ -582,7 +592,7 @@ def test_parallel_match_sparse():
     for _ in range(nr_reps):
     
         min_nr_per_rank = 0
-        max_nr_per_rank = 10000
+        max_nr_per_rank = 1000
         frac_arr1 = 0.01
         frac_arr2 = 0.01
         run_parallel_match(min_nr_per_rank, max_nr_per_rank, frac_arr1, frac_arr2)
