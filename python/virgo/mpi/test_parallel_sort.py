@@ -5,6 +5,13 @@ import numpy as np
 import pytest
 import virgo.mpi.parallel_sort as psort
 
+# Ensure a different random seed on each MPI rank
+from mpi4py import MPI
+comm = MPI.COMM_WORLD
+comm_rank = comm.Get_rank()
+np.random.seed(comm_rank)
+
+
 def assert_all_ranks(condition, message, comm=None):
     """Fails assertion on all ranks if condition is False on any rank"""
     from mpi4py import MPI
