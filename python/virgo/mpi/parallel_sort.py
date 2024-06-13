@@ -823,33 +823,52 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
     # Allocate array for the result
     index_out = np.zeros(arr1.shape, dtype=index_dtype) - 1
 
+    # Get the size of arr2 on all ranks
+    arr2_size = np.asarray(comm.allgather(arr2_ordered.shape[0]), dtype=int)
+    
     #
     # Loop over MPI ranks to communicate with
     #
-    # Here, each MPI rank has identified the range of its local arr1
-    # values which might be found in each other rank's arr2. We send the
-    # arr1 values to the other rank, it checks them against its arr2
-    # values and then it returns the global index of any matching elements.
-    #
     for dest in hypercube_neighbours(comm):
 
-        # Exchange data with this other rank
-        arr1_send = arr1_ls[send_displ[dest]:send_displ[dest]+send_count[dest]]
-        arr1_recv = np.ndarray(recv_count[dest], dtype=arr1_ls.dtype)
-        sendrecv(dest, arr1_send, arr1_recv, comm=comm)
+        # Identify range in local sorted arr1 which might match arr2 on dest
+        arr1_local  = arr1_ls[send_displ[dest]:send_displ[dest]+send_count[dest]]
 
-        # For each imported arr1 element, find global rank of the matching arr2 element
-        ptr = virgo.util.match.match(arr1_recv, arr2_ordered, arr2_sorted=True)        
-        del arr1_recv
-        index_return = -np.ones(ptr.shape, dtype=index_dtype)
-        index_return[ptr>=0] = index_in[ptr[ptr>=0]]
-        del ptr
+        # Identify corresponding section of the output index array, which we
+        # will update on this iteration
+        index_local = index_out[send_displ[dest]:send_displ[dest]+send_count[dest]]
 
-        # Return the result
-        index_recv = index_out[send_displ[dest]:send_displ[dest]+send_count[dest]]
-        sendrecv(dest, index_return, index_recv, comm=comm)
-        del index_return
-    
+        # Identify array sizes on this rank and on dest
+        nr_arr1_local = arr1_local.shape[0]
+        nr_arr1_dest  = recv_count[dest]
+        nr_arr2_local = arr2_ordered.shape[0]
+        nr_arr2_dest  = arr2_size[dest]
+
+        # Determine if we're sending our arr1 to dest
+        send_arr1 = True #nr_arr1_local <= nr_arr2_dest
+
+        # Determine if dest is sending its arr1 to us
+        recv_arr1 = True # nr_arr1_dest <= nr_arr2_local
+
+        # Set up send and receive buffers for arr1
+        sendbuf_size = nr_arr1_local if send_arr1 else 0 
+        arr1_sendbuf = arr1_local[:sendbuf_size]
+        recvbuf_size = nr_arr1_dest if recv_arr1 else 0
+        arr1_recvbuf = np.ndarray(recvbuf_size, dtype=arr1_ls.dtype)
+        
+        # Exchange arr1 values
+        sendrecv(dest, arr1_sendbuf, arr1_recvbuf, comm=comm)
+
+        # Match received arr1 values against local arr2 and look up indexes of matches
+        ptr = virgo.util.match.match(arr1_recvbuf, arr2_ordered, arr2_sorted=True)        
+        index_sendbuf = -np.ones(ptr.shape, dtype=index_dtype)
+        index_sendbuf[ptr>=0] = index_in[ptr[ptr>=0]]
+
+        # Reverse exchange the result. Only have a result to receive if we sent
+        # a request.
+        index_recvbuf = index_local if send_arr1 else index_local[:0]
+        sendrecv(dest, index_sendbuf, index_recvbuf, comm=comm)
+            
     # Restore original order
     index = np.empty_like(index_out)
     index[idx] = index_out
