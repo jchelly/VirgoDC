@@ -829,6 +829,14 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
     #
     # Loop over MPI ranks to communicate with
     #
+    # For each section of our local arr1 corresponding to a remote rank
+    # we have two options:
+    #
+    # 1. Send our arr1 to the remote rank and have it return indexes of matches
+    # 2. Receive the remote rank's arr2 and carry out matching locally
+    #
+    # Here we use whichever method minimizes the number of elements to move.
+    #
     for dest in hypercube_neighbours(comm):
 
         # Identify range in local sorted arr1 which might match arr2 on dest
@@ -844,11 +852,15 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
         nr_arr2_local = arr2_ordered.shape[0]
         nr_arr2_dest  = arr2_size[dest]
 
+        #
+        # If the local arr1 section is not larger than the remote
+        # arr2 then we'll send arr1 to the remote rank for matching.
+        #
         # Determine if we're sending our arr1 to dest
-        send_arr1 = True #nr_arr1_local <= nr_arr2_dest
+        send_arr1 = nr_arr1_local <= nr_arr2_dest
 
         # Determine if dest is sending its arr1 to us
-        recv_arr1 = True # nr_arr1_dest <= nr_arr2_local
+        recv_arr1 = nr_arr1_dest <= nr_arr2_local
 
         # Set up send and receive buffers for arr1
         sendbuf_size = nr_arr1_local if send_arr1 else 0 
@@ -868,7 +880,32 @@ def parallel_match(arr1, arr2, arr2_sorted=False, comm=None):
         # a request.
         index_recvbuf = index_local if send_arr1 else index_local[:0]
         sendrecv(dest, index_sendbuf, index_recvbuf, comm=comm)
-            
+
+        #
+        # If the local arr1 section is larger than the remote arr2 then we'll
+        # import the remote arr2 and corresponding indexes and do the matching
+        # locally.
+        #
+        # Set up send and receive buffers.
+        #
+        # If we received dest's arr1 then we do not need to send our arr2
+        # If we sent our arr1 to dest then we do not need to receive dest's arr2
+        #
+        sendbuf_size = 0 if recv_arr1 else nr_arr2_local
+        arr2_sendbuf  = arr2_ordered[:sendbuf_size]
+        index_sendbuf = index_in[:sendbuf_size]
+        recvbuf_size = 0 if send_arr1 else nr_arr2_dest
+        arr2_recvbuf  = np.ndarray(recvbuf_size, dtype=arr2_ordered.dtype)
+        index_recvbuf = np.ndarray(recvbuf_size, dtype=index_in.dtype)
+
+        # Exchange arr2 values and indexes
+        sendrecv(dest, arr2_sendbuf, arr2_recvbuf, comm=comm)
+        sendrecv(dest, index_sendbuf, index_recvbuf, comm=comm)
+
+        # We can now check if the imported arr2 values match our local arr1 section
+        ptr = virgo.util.match.match(arr1_local, arr2_recvbuf, arr2_sorted=True)        
+        index_local[ptr>=0] = index_recvbuf[ptr[ptr>=0]]
+        
     # Restore original order
     index = np.empty_like(index_out)
     index[idx] = index_out
