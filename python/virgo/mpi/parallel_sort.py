@@ -1246,19 +1246,24 @@ class HashMatcher:
 
     Instantiating the class redistributes arr2 over MPI ranks so that we
     can carry out repeated searches of arr2 with different arr1.
+
+    Best not to use python's hash() here because hash(n)=n for integers.
     """
 
     def destination_rank(self, arr):
-        if arr.dtype.itemsize == 8:
+        if arr.dtype.itemsize == 4:
+            arr_view = arr.view(dtype=np.uint32)
+            arr_hash = np.bitwise_xor(np.right_shift(arr_view, 16), arr_view) * 0x45d9f3b
+            arr_hash = np.bitwise_xor(np.right_shift(arr_hash, 16), arr_hash) * 0x45d9f3b
+            arr_hash = np.bitwise_xor(np.right_shift(arr_hash, 16), arr_hash)
+        elif arr.dtype.itemsize == 8:
             arr_view = arr.view(dtype=np.uint64)
-            arr_hash = np.empty_like(arr_view)
-            arr_hash[...] = arr_view[...]
-            arr_hash = np.bitwise_xor(arr_hash, np.right_shift(arr_hash, 30)) * 0xbf58476d1ce4e5b9
+            arr_hash = np.bitwise_xor(arr_view, np.right_shift(arr_view, 30)) * 0xbf58476d1ce4e5b9
             arr_hash = np.bitwise_xor(arr_hash, np.right_shift(arr_hash, 27)) * 0x94d049bb133111eb
             arr_hash = np.bitwise_xor(arr_hash, np.right_shift(arr_hash, 31))
             return np.mod(arr_hash, self.comm_size).astype(int)
         else:
-            raise RuntimeError("Unsupported data type!")
+            raise RuntimeError("Unsupported data type: must be 4 or 8 bytes per element")
         
     def __init__(self, arr2, comm=None):
         """
