@@ -1201,3 +1201,99 @@ def parallel_bincount(x, weights=None, minlength=None, result=None, comm=None):
     reduce_elements(result, unique_weights, unique_x, op=np.add, comm=comm)
 
     return result
+
+
+def hash_match(arr1, arr2, comm=None):
+    """
+    For each element in arr1 return the global index of an element with the
+    same value in arr2, or -1 if there's no element with the same value.
+
+    This is similar to parallel_match() but only works on integer types
+    of 8 byte size. Matching is implemented by hashing values and sending
+    them to a rank based on their hash.
+    """
+
+    # Get communicator to use
+    from mpi4py import MPI
+    if comm is None:
+        comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+
+    # Find global index of first arr2 element on each rank:
+    # This is just the number of elements on previous ranks.
+    arr2_global_offset = comm.scan(len(arr2)) - len(arr2)
+    
+    # Function to determine where to send an array element based on its value:
+    # We hash the value and return the hash modulo the communicator size.
+    def destination_rank(arr, comm_size):
+        if arr.dtype.itemsize == 8:
+            arr_view = arr.view(dtype=np.uint64)
+            arr_hash = np.empty_like(arr_view)
+            arr_hash[...] = arr_view[...]
+            arr_hash = np.bitwise_xor(arr_hash, np.right_shift(arr_hash, 30)) * 0xbf58476d1ce4e5b9
+            arr_hash = np.bitwise_xor(arr_hash, np.right_shift(arr_hash, 27)) * 0x94d049bb133111eb
+            arr_hash = np.bitwise_xor(arr_hash, np.right_shift(arr_hash, 31))
+            return np.mod(arr_hash, comm_size).astype(int)
+        else:
+            raise RuntimeError("Unsupported data type!")
+
+    # Ensure inputs are array-like
+    arr1 = np.asanyarray(arr1)
+    arr2 = np.asanyarray(arr2)
+
+    # Get destination rank for each element
+    arr1_dest = destination_rank(arr1, comm_size)
+    arr2_dest = destination_rank(arr2, comm_size)
+
+    # Get sorting order by destination
+    arr1_order = np.argsort(arr1_dest)
+    arr2_order = np.argsort(arr2_dest)
+    
+    # Find range of elements to go to each destination when sorted by destination
+    arr1_nr_per_dest = np.bincount(arr1_dest, minlength=comm_size)
+    arr1_dest_offset = np.cumsum(arr1_nr_per_dest) - arr1_nr_per_dest
+    arr2_nr_per_dest = np.bincount(arr2_dest, minlength=comm_size)
+    arr2_dest_offset = np.cumsum(arr2_nr_per_dest) - arr2_nr_per_dest
+
+    # Allocate output array
+    match_index = -np.ones(len(arr1), dtype=int)
+    
+    # Loop over MPI ranks to communicate with.
+    # For each other rank we have some arr1 values that might match their arr2
+    # and they have arr1 values that might match our arr2.
+    for dest in hypercube_neighbours(comm):
+        
+        # Identify indexes in arr1 which might match arr2 elements on dest
+        idx1 = arr1_order[arr1_dest_offset[dest]:arr1_dest_offset[dest]+arr1_nr_per_dest[dest]]
+
+        # Identify indexes in arr2 which might match arr1 elements on dest
+        idx2 = arr2_order[arr2_dest_offset[dest]:arr2_dest_offset[dest]+arr2_nr_per_dest[dest]]
+
+        # Exchange arr1 values
+        arr1_send = arr1[idx1]
+        nr_arr1_send = len(arr1_send)
+        nr_arr1_recv = comm.sendrecv(nr_arr1_send, dest=dest, source=dest)
+        arr1_recv = np.ndarray(nr_arr1_recv, dtype=arr1.dtype)
+        sendrecv(dest, arr1_send, arr1_recv, comm=comm)
+
+        # Get value and global index of elements which might match the received arr1
+        arr2_value = arr2[idx2]
+        arr2_index = idx2 + arr2_global_offset
+
+        # Get the global index of arr2 values matching the received arr1
+        ptr = virgo.util.match.match(arr1_recv, arr2_value)
+        have_match = ptr >= 0
+        index_send = -np.ones(nr_arr1_recv, dtype=int)
+        index_send[have_match] = arr2_index[ptr[have_match]]
+
+        # Reverse exchange the indexes
+        nr_index_send = len(index_send)
+        nr_index_recv = comm.sendrecv(nr_index_send, dest=dest, source=dest)
+        index_recv = np.ndarray(nr_index_recv, dtype=index_send.dtype)
+        sendrecv(dest, index_send, index_recv, comm=comm)
+
+        # Update the relevant part of the output array
+        match_index[idx1] = index_recv        
+        
+    return match_index
