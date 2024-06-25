@@ -519,9 +519,8 @@ def run_parallel_match(min_nr_per_rank, max_nr_per_rank, frac_arr1, frac_arr2):
         ptr = psort.parallel_match(arr1, arr2, comm=comm)
         verify_parallel_match(arr1, arr2, ptr, comm=comm)
 
-        ptr = psort.parallel_hash_match(arr1, arr2, comm=comm)
+        ptr = psort.HashMatcher(arr2, comm=comm).match(arr1)
         verify_parallel_match(arr1, arr2, ptr, comm=comm)
-
 
 @pytest.mark.mpi
 def test_parallel_match():
