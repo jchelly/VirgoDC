@@ -109,6 +109,39 @@ def my_alltoallv(sendbuf, send_count, send_offset,
     mpi_type_recv.Free()
 
 
+def alltoall_exchange(sendbuf, send_count, comm=None):
+    """
+    Carry out an alltoallv assuming contiguous array sections to be sent
+    to each rank so that all counts and offsets can be computed from
+    just the send counts.
+    """
+
+    # Get communicator to use
+    from mpi4py import MPI
+    if comm is None:
+        comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+    
+    # Construct counts and offsets
+    send_count  = np.asarray(send_count, dtype=int)
+    send_offset = np.cumsum(send_count) - send_count
+    recv_count  = np.ndarray(len(send_count), dtype=int)
+    comm.Alltoall(send_count, recv_count)
+    recv_offset = np.cumsum(recv_count) - recv_count
+
+    # Construct the output buffer
+    nr_recv = recv_count.sum()
+    recvbuf = np.ndarray(nr_recv, dtype=sendbuf.dtype)
+
+    # Exchange data
+    my_alltoallv(sendbuf, send_count, send_offset,
+                 recvbuf, recv_count, recv_offset,
+                 comm=comm)
+    
+    return recvbuf
+
+
 def my_argsort(arr):
     """
     Determines serial sorting algorithm used.
@@ -1203,14 +1236,14 @@ def parallel_bincount(x, weights=None, minlength=None, result=None, comm=None):
     return result
 
 
-def hash_match(arr1, arr2, comm=None):
+def parallel_hash_match(arr1, arr2, comm=None):
     """
     For each element in arr1 return the global index of an element with the
     same value in arr2, or -1 if there's no element with the same value.
 
-    This is similar to parallel_match() but only works on integer types
-    of 8 byte size. Matching is implemented by hashing values and sending
-    them to a rank based on their hash.
+    This is similar to parallel_match() but only works on types of 8 byte
+    size. Matching is implemented by hashing values and sending them to a
+    rank based on their hash.
     """
 
     # Get communicator to use
@@ -1251,24 +1284,36 @@ def hash_match(arr1, arr2, comm=None):
     arr2_order = np.argsort(arr2_dest)
     
     # Find range of elements to go to each destination when sorted by destination
-    arr1_nr_per_dest = np.bincount(arr1_dest, minlength=comm_size)
-    arr1_dest_offset = np.cumsum(arr1_nr_per_dest) - arr1_nr_per_dest
-    arr2_nr_per_dest = np.bincount(arr2_dest, minlength=comm_size)
-    arr2_dest_offset = np.cumsum(arr2_nr_per_dest) - arr2_nr_per_dest
+    arr1_send_count  = np.bincount(arr1_dest, minlength=comm_size)
+    arr1_send_offset = np.cumsum(arr1_send_count) - arr1_send_count
+    arr2_send_count  = np.bincount(arr2_dest, minlength=comm_size)
+    arr2_send_offset = np.cumsum(arr2_send_count) - arr2_send_count
+    del arr1_dest
+    del arr2_dest
+    
+    # Get arr2 global indexes ordered by destination
+    arr2_index = np.arange(len(arr2), dtype=index_dtype) + arr2_global_offset
+    arr2_index = arr2_index[arr2_order]
+
+    # Get arr2 values ordered by destination
+    arr2 = arr2[arr2_order]
+    del arr2_order
+
+    # Move arr2 values and indexes to destination
+    arr2 = alltoall_exchange(arr2, arr2_send_count, comm=comm)
+    arr2_index = alltoall_exchange(arr2_index, arr2_send_count, comm=comm)
+    assert np.all(destination_rank(arr2, comm_size)==comm_rank)
 
     # Allocate output array
-    match_index = -np.ones(len(arr1), dtype=int)
-    
+    match_index = -np.ones(len(arr1), dtype=index_dtype)
+
     # Loop over MPI ranks to communicate with.
     # For each other rank we have some arr1 values that might match their arr2
     # and they have arr1 values that might match our arr2.
     for dest in hypercube_neighbours(comm):
         
         # Identify indexes in arr1 which might match arr2 elements on dest
-        idx1 = arr1_order[arr1_dest_offset[dest]:arr1_dest_offset[dest]+arr1_nr_per_dest[dest]]
-
-        # Identify indexes in arr2 which might match arr1 elements on dest
-        idx2 = arr2_order[arr2_dest_offset[dest]:arr2_dest_offset[dest]+arr2_nr_per_dest[dest]]
+        idx1 = arr1_order[arr1_send_offset[dest]:arr1_send_offset[dest]+arr1_send_count[dest]]
 
         # Exchange arr1 values
         arr1_send = arr1[idx1]
@@ -1277,14 +1322,10 @@ def hash_match(arr1, arr2, comm=None):
         arr1_recv = np.ndarray(nr_arr1_recv, dtype=arr1.dtype)
         sendrecv(dest, arr1_send, arr1_recv, comm=comm)
 
-        # Get value and global index of elements which might match the received arr1
-        arr2_value = arr2[idx2]
-        arr2_index = idx2 + arr2_global_offset
-
         # Get the global index of arr2 values matching the received arr1
-        ptr = virgo.util.match.match(arr1_recv, arr2_value)
+        ptr = virgo.util.match.match(arr1_recv, arr2)
         have_match = ptr >= 0
-        index_send = -np.ones(nr_arr1_recv, dtype=int)
+        index_send = -np.ones(nr_arr1_recv, dtype=arr2_index.dtype)
         index_send[have_match] = arr2_index[ptr[have_match]]
 
         # Reverse exchange the indexes
