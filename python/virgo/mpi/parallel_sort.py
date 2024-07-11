@@ -109,7 +109,7 @@ def my_alltoallv(sendbuf, send_count, send_offset,
     mpi_type_recv.Free()
 
 
-def alltoall_exchange(sendbuf, send_count, comm=None):
+def alltoall_exchange(sendbuf, send_count, comm=None, reverse=False):
     """
     Carry out an alltoallv assuming contiguous array sections to be sent
     to each rank so that all counts and offsets can be computed from
@@ -129,6 +129,12 @@ def alltoall_exchange(sendbuf, send_count, comm=None):
     recv_count  = np.ndarray(len(send_count), dtype=int)
     comm.Alltoall(send_count, recv_count)
     recv_offset = np.cumsum(recv_count) - recv_count
+
+    if reverse:
+        # Swap the send and receive counts and offsets in the case where they
+        # describe a previous exchange which we now want to reverse.
+        send_count, recv_count = recv_count, send_count
+        send_offset, recv_offset = recv_offset, send_offset
 
     # Construct the output buffer
     nr_recv = recv_count.sum()
@@ -1313,6 +1319,11 @@ class HashMatcher:
         self.arr2 = alltoall_exchange(arr2, arr2_send_count, comm=self.comm)
         self.arr2_index = alltoall_exchange(arr2_index, arr2_send_count, comm=self.comm)
         assert np.all(self.destination_rank(self.arr2)==self.comm_rank)
+
+        # Sort arr2 values by value
+        order = np.argsort(self.arr2)
+        self.arr2 = self.arr2[order]
+        self.arr2_index = self.arr2_index[order]
         
     def match(self, arr1):
         """
@@ -1352,7 +1363,7 @@ class HashMatcher:
             sendrecv(dest, arr1_send, arr1_recv, comm=self.comm)
 
             # Get the global index of arr2 values matching the received arr1
-            ptr = virgo.util.match.match(arr1_recv, self.arr2)
+            ptr = virgo.util.match.match(arr1_recv, self.arr2, arr2_sorted=True)
             have_match = ptr >= 0
             index_send = -np.ones(nr_arr1_recv, dtype=self.arr2_index.dtype)
             index_send[have_match] = self.arr2_index[ptr[have_match]]
