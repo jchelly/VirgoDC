@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "virgodc"
+version = "1.0.0"
+authors = [
+  { name="John Helly", email="j.c.helly@durham.ac.uk" },
+]
+description = "Tools for working with Virgo consortium n-body simulations."
+requires-python = ">=3.10"
+dependencies = [
+    "h5py",
+    "numpy",
+    "mpi4py",
+]
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/jchelly/VirgoDC"
+Issues = "https://github.com/jchelly/VirgoDC/issues"
+
+[tool.setuptools]
+packages = [
+    'virgo',
+    'virgo.formats',
+    'virgo.util',
+    'virgo.sims',
+    'virgo.database',
+    'virgo.mpi'
+]
+
