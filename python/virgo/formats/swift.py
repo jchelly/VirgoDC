@@ -128,7 +128,10 @@ def soap_units_from_attributes(attrs, registry):
     unit = unyt.Unit(u, registry=registry)
 
     # SOAP outputs can have units which are not just powers of the base units.
-    cgs_conversion_from_attrs = float(attrs["Conversion factor to CGS (including cosmological corrections)"])
+    try:
+        cgs_conversion_from_attrs = float(attrs["Conversion factor to physical CGS (including cosmological corrections)"])
+    except KeyError:
+        cgs_conversion_from_attrs = float(attrs["Conversion factor to CGS (including cosmological corrections)"])
     cgs_conversion_from_unyt = float((1.0*unit).in_cgs().value)
     factor = cgs_conversion_from_attrs / cgs_conversion_from_unyt
     if np.isclose(factor, 1.0, atol=0.0, rtol=1.0e-9):
