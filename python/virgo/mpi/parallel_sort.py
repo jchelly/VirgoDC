@@ -1310,10 +1310,11 @@ class HashMatcher:
 
         # Exchange arr1 elements
         arr1_recvbuf = alltoall_exchange(arr1_sendbuf, arr1_send_count, comm=self.comm)
+        assert np.all(self.destination_rank(arr1_recvbuf)==self.comm_rank)
 
         # For each imported arr1 element, find the index of the matching arr2 element
         import virgo.util.match
-        ptr = virgo.util.match.match(arr1_recvbuf, self.arr2)
+        ptr = virgo.util.match.match(arr1_recvbuf, self.arr2, arr2_sorted=True)
         arr1_recvbuf_index = -np.ones(arr1_recvbuf.shape, dtype=index_dtype)
         arr1_recvbuf_index[ptr>=0] = self.arr2_index[ptr[ptr>=0]]
 
