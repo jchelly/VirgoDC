@@ -96,7 +96,58 @@ def my_argsort(arr):
     return np.argsort(arr, kind='mergesort')
 
 
+def sendrecv(dest, sendbuf, recvbuf, comm=None, nchunk=None):
+    """
+    Sendrecv implementation which splits communications where necessary.
+    Source and destination are assumed to be the same. Arrays must be 1D.
+    
+    dest    - other MPI rank to communicate with
+    sendbuf - array to send
+    recvbuf - array to receive into
+    comm    - communicator to use, defaults to MPI_COMM_WORLD
+    nchunk  - maximum number of elements per send (default 100MB)
+    """
 
+    # Get communicator to use
+    from mpi4py import MPI
+    if comm is None:
+        comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+    
+    # Get data types
+    mpi_type_send = mpi_datatype(sendbuf.dtype)
+    mpi_type_recv = mpi_datatype(recvbuf.dtype)
+    
+    # Maximum number of elements per message: avoid messages > 2GB
+    assert sendbuf.dtype == recvbuf.dtype
+    assert len(sendbuf.shape) == 1
+    assert len(recvbuf.shape) == 1
+    if nchunk is None:
+        nchunk = (100*1024*1024) // sendbuf.dtype.itemsize
+    
+    # Determine number of elements to send and receive
+    nr_send_left = sendbuf.shape[0]
+    nr_recv_left = comm.sendrecv(nr_send_left, dest=dest, source=dest)
+
+    # Transfer data until it has all been moved
+    send_offset = 0
+    recv_offset = 0
+    while (nr_send_left > 0) or (nr_recv_left > 0):
+        nr_send = min(nchunk, nr_send_left)
+        nr_recv = min(nchunk, nr_recv_left)
+        comm.Sendrecv(sendbuf[send_offset:send_offset+nr_send], dest,
+                      recvbuf=recvbuf[recv_offset:recv_offset+nr_recv],
+                      source=dest)
+        send_offset  += nr_send
+        nr_send_left -= nr_send
+        recv_offset  += nr_recv
+        nr_recv_left -= nr_recv
+
+    mpi_type_send.Free()
+    mpi_type_recv.Free()
+
+        
 def repartition(arr, ndesired, comm=None):
     """Return the input arr repartitioned between processors"""
 
