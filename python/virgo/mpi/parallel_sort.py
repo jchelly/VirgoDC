@@ -34,27 +34,6 @@ def mpi_datatype(dtype):
     return mpi_type
 
 
-def hypercube_neighbours(comm=None):
-    """
-    Return indexes of all MPI ranks in the supplied communicator in an
-    order which can be used for alltoall type communications.
-    """
-    
-    if comm is None:
-        comm = MPI.COMM_WORLD
-    comm_rank = comm.Get_rank()
-    comm_size = comm.Get_size()
-    
-    ptask = 0
-    while(2**ptask < comm_size):
-        ptask += 1
-
-    for ngrp in range(2**ptask):
-        rank = comm_rank ^ ngrp
-        if rank < comm_size:
-            yield rank
-
-
 def my_alltoallv(sendbuf, send_count, send_offset,
                  recvbuf, recv_count, recv_offset,
                  comm=None, method=None):
