@@ -143,8 +143,11 @@ def sendrecv(dest, sendbuf, recvbuf, comm=None, nchunk=None):
         nr_send_left -= nr_send
         recv_offset  += nr_recv
         nr_recv_left -= nr_recv
-    
 
+    mpi_type_send.Free()
+    mpi_type_recv.Free()
+
+        
 def repartition(arr, ndesired, comm=None):
     """Return the input arr repartitioned between processors"""
 
