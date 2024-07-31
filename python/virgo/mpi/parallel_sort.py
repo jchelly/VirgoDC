@@ -1206,7 +1206,7 @@ class HashMatcher:
 
     This is similar to parallel_match(arr1, arr2) in that for each element
     in arr1 it returns the index of a matching element in arr2, or -1 if no
-    match is found. Currently only implemented for 8 byte data types.
+    match is found. Currently only implemented for 4 or 8 byte types.
 
     Instantiating the class redistributes arr2 over MPI ranks so that we
     can carry out repeated searches of arr2 with different arr1.
