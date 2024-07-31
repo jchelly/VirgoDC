@@ -1198,3 +1198,141 @@ def parallel_bincount(x, weights=None, minlength=None, result=None, comm=None):
     reduce_elements(result, unique_weights, unique_x, op=np.add, comm=comm)
 
     return result
+
+
+class HashMatcher:
+    """
+    Class for matching integers between pairs of arrays.
+
+    This is similar to parallel_match(arr1, arr2) in that for each element
+    in arr1 it returns the index of a matching element in arr2, or -1 if no
+    match is found. Currently only implemented for 8 byte data types.
+
+    Instantiating the class redistributes arr2 over MPI ranks so that we
+    can carry out repeated searches of arr2 with different arr1.
+
+    Best not to use python's hash() here because hash(n)=n for integers.
+    """
+
+    def destination_rank(self, arr):
+        if arr.dtype.itemsize == 4:
+            arr_view = arr.view(dtype=np.uint32)
+            arr_hash = np.bitwise_xor(np.right_shift(arr_view, 16), arr_view) * 0x45d9f3b
+            arr_hash = np.bitwise_xor(np.right_shift(arr_hash, 16), arr_hash) * 0x45d9f3b
+            arr_hash = np.bitwise_xor(np.right_shift(arr_hash, 16), arr_hash)
+        elif arr.dtype.itemsize == 8:
+            arr_view = arr.view(dtype=np.uint64)
+            arr_hash = np.bitwise_xor(arr_view, np.right_shift(arr_view, 30)) * 0xbf58476d1ce4e5b9
+            arr_hash = np.bitwise_xor(arr_hash, np.right_shift(arr_hash, 27)) * 0x94d049bb133111eb
+            arr_hash = np.bitwise_xor(arr_hash, np.right_shift(arr_hash, 31))
+            return np.mod(arr_hash, self.comm_size).astype(int)
+        else:
+            raise RuntimeError("Unsupported data type: must be 4 or 8 bytes per element")
+        
+    def __init__(self, arr2, comm=None):
+        """
+        Initialize a new hash matcher.
+
+        arr2 - the array of values we will be matching to
+        comm - the MPI communicator to use
+
+        This moves array elements to an MPI rank based on the hash of their
+        value so that we can efficiently search for values later.
+        """
+
+        # Get communicator to use
+        from mpi4py import MPI
+        if comm is None:
+            self.comm = MPI.COMM_WORLD
+        else:
+            self.comm = comm
+        self.comm_rank = self.comm.Get_rank()
+        self.comm_size = self.comm.Get_size()
+        
+        # Get destination rank for each element
+        arr2 = np.asanyarray(arr2)
+        arr2_dest = self.destination_rank(arr2)
+
+        # Find global index of first arr2 element on each rank:
+        # This is just the number of elements on previous ranks.
+        arr2_global_offset = self.comm.scan(len(arr2)) - len(arr2)
+
+        # Get sorting order by destination
+        arr2_order = np.argsort(arr2_dest)
+    
+        # Find range of elements to go to each destination when sorted by destination
+        arr2_send_count  = np.bincount(arr2_dest, minlength=self.comm_size)
+        arr2_send_offset = np.cumsum(arr2_send_count) - arr2_send_count
+        del arr2_dest
+    
+        # Get arr2 global indexes ordered by destination
+        arr2_index = np.arange(len(arr2), dtype=index_dtype) + arr2_global_offset
+        arr2_index = arr2_index[arr2_order]
+
+        # Get arr2 values ordered by destination
+        arr2 = arr2[arr2_order]
+        del arr2_order
+
+        # Move arr2 values and indexes to destination
+        self.arr2 = alltoall_exchange(arr2, arr2_send_count, comm=self.comm)
+        self.arr2_index = alltoall_exchange(arr2_index, arr2_send_count, comm=self.comm)
+        assert np.all(self.destination_rank(self.arr2)==self.comm_rank)
+
+        # Sort arr2 values by value
+        order = np.argsort(self.arr2)
+        self.arr2 = self.arr2[order]
+        self.arr2_index = self.arr2_index[order]
+        
+    def match(self, arr1):
+        """
+        Return the global index in arr2 of each value in arr1
+        """
+        
+        # Ensure inputs are array-like
+        arr1 = np.asanyarray(arr1)
+
+        # Get destination rank for each element
+        arr1_dest = self.destination_rank(arr1)
+
+        # Get sorting order by destination
+        arr1_order = np.argsort(arr1_dest)
+
+        # Find range of elements to go to each destination when sorted by destination
+        arr1_send_count  = np.bincount(arr1_dest, minlength=self.comm_size)
+        arr1_send_offset = np.cumsum(arr1_send_count) - arr1_send_count
+        del arr1_dest
+
+        # Allocate output array
+        match_index = -np.ones(len(arr1), dtype=index_dtype)
+
+        # Loop over MPI ranks to communicate with.
+        # For each other rank we have some arr1 values that might match their arr2
+        # and they have arr1 values that might match our arr2.
+        for dest in hypercube_neighbours(self.comm):
+
+            # Identify indexes in arr1 which might match arr2 elements on dest
+            idx1 = arr1_order[arr1_send_offset[dest]:arr1_send_offset[dest]+arr1_send_count[dest]]
+
+            # Exchange arr1 values
+            arr1_send = arr1[idx1]
+            nr_arr1_send = len(arr1_send)
+            nr_arr1_recv = self.comm.sendrecv(nr_arr1_send, dest=dest, source=dest)
+            arr1_recv = np.ndarray(nr_arr1_recv, dtype=arr1.dtype)
+            sendrecv(dest, arr1_send, arr1_recv, comm=self.comm)
+
+            # Get the global index of arr2 values matching the received arr1
+            ptr = virgo.util.match.match(arr1_recv, self.arr2, arr2_sorted=True)
+            have_match = ptr >= 0
+            index_send = -np.ones(nr_arr1_recv, dtype=self.arr2_index.dtype)
+            index_send[have_match] = self.arr2_index[ptr[have_match]]
+
+            # Reverse exchange the indexes
+            nr_index_send = len(index_send)
+            nr_index_recv = self.comm.sendrecv(nr_index_send, dest=dest, source=dest)
+            index_recv = np.ndarray(nr_index_recv, dtype=index_send.dtype)
+            sendrecv(dest, index_send, index_recv, comm=self.comm)
+
+            # Update the relevant part of the output array
+            match_index[idx1] = index_recv        
+
+        return match_index
