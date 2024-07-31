@@ -190,6 +190,45 @@ def sendrecv(dest, sendbuf, recvbuf, comm=None, nchunk=None):
     mpi_type_send.Free()
     mpi_type_recv.Free()
 
+
+def alltoall_exchange(sendbuf, send_count, comm=None, reverse=False):
+    """
+    Carry out an alltoallv assuming contiguous array sections to be sent
+    to each rank so that all counts and offsets can be computed from
+    just the send counts.
+    """
+
+    # Get communicator to use
+    from mpi4py import MPI
+    if comm is None:
+        comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+    
+    # Construct counts and offsets
+    send_count  = np.asarray(send_count, dtype=int)
+    send_offset = np.cumsum(send_count) - send_count
+    recv_count  = np.ndarray(len(send_count), dtype=int)
+    comm.Alltoall(send_count, recv_count)
+    recv_offset = np.cumsum(recv_count) - recv_count
+
+    if reverse:
+        # Swap the send and receive counts and offsets in the case where they
+        # describe a previous exchange which we now want to reverse.
+        send_count, recv_count = recv_count, send_count
+        send_offset, recv_offset = recv_offset, send_offset
+
+    # Construct the output buffer
+    nr_recv = recv_count.sum()
+    recvbuf = np.ndarray(nr_recv, dtype=sendbuf.dtype)
+
+    # Exchange data
+    my_alltoallv(sendbuf, send_count, send_offset,
+                 recvbuf, recv_count, recv_offset,
+                 comm=comm)
+    
+    return recvbuf
+
         
 def repartition(arr, ndesired, comm=None):
     """Return the input arr repartitioned between processors"""
