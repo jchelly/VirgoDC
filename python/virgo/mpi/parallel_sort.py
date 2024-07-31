@@ -1279,7 +1279,7 @@ class HashMatcher:
         arr2_global_offset = self.comm.scan(len(arr2)) - len(arr2)
 
         # Get sorting order by destination
-        arr2_order = np.argsort(arr2_dest)
+        arr2_order = my_argsort(arr2_dest)
     
         # Find range of elements to go to each destination when sorted by destination
         arr2_send_count  = np.bincount(arr2_dest, minlength=self.comm_size)
@@ -1326,35 +1326,23 @@ class HashMatcher:
         # Allocate output array
         match_index = -np.ones(len(arr1), dtype=index_dtype)
 
-        # Loop over MPI ranks to communicate with.
-        # For each other rank we have some arr1 values that might match their arr2
-        # and they have arr1 values that might match our arr2.
-        for dest in hypercube_neighbours(self.comm):
+        # Construct sorted send buffer for arr1 elements
+        arr1_sendbuf = arr1[arr1_order]
 
-            # Identify indexes in arr1 which might match arr2 elements on dest
-            idx1 = arr1_order[arr1_send_offset[dest]:arr1_send_offset[dest]+arr1_send_count[dest]]
+        # Exchange arr1 elements
+        arr1_recvbuf = alltoall_exchange(arr1_sendbuf, arr1_send_count, comm=self.comm)
 
-            # Exchange arr1 values
-            arr1_send = arr1[idx1]
-            nr_arr1_send = len(arr1_send)
-            nr_arr1_recv = self.comm.sendrecv(nr_arr1_send, dest=dest, source=dest)
-            arr1_recv = np.ndarray(nr_arr1_recv, dtype=arr1.dtype)
-            sendrecv(dest, arr1_send, arr1_recv, comm=self.comm)
+        # For each imported arr1 element, find the index of the matching arr2 element
+        import virgo.util.match
+        ptr = virgo.util.match.match(arr1_recvbuf, self.arr2)
+        arr1_recvbuf_index = -np.ones(arr1_recvbuf.shape, dtype=index_dtype)
+        arr1_recvbuf_index[ptr>=0] = self.arr2_index[ptr[ptr>=0]]
 
-            # Get the global index of arr2 values matching the received arr1
-            import virgo.util.match
-            ptr = virgo.util.match.match(arr1_recv, self.arr2, arr2_sorted=True)
-            have_match = ptr >= 0
-            index_send = -np.ones(nr_arr1_recv, dtype=self.arr2_index.dtype)
-            index_send[have_match] = self.arr2_index[ptr[have_match]]
+        # Reverse exchange the indexes
+        arr1_sendbuf_index =  alltoall_exchange(arr1_recvbuf_index, arr1_send_count, comm=self.comm, reverse=True)
 
-            # Reverse exchange the indexes
-            nr_index_send = len(index_send)
-            nr_index_recv = self.comm.sendrecv(nr_index_send, dest=dest, source=dest)
-            index_recv = np.ndarray(nr_index_recv, dtype=index_send.dtype)
-            sendrecv(dest, index_send, index_recv, comm=self.comm)
-
-            # Update the relevant part of the output array
-            match_index[idx1] = index_recv        
+        # Return the result in the same order as arr1
+        match_index = -np.ones(len(arr1), dtype=index_dtype)
+        match_index[arr1_order] = arr1_sendbuf_index
 
         return match_index
