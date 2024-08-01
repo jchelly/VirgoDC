@@ -636,6 +636,7 @@ class MultiFile:
             else:
                 elements_per_file[self.all_file_indexes[self.collective_file_nr]] = 0
             infile.close()
+            comm.Free()
         else:
             # Independent I/O: different ranks read different files
             rank  = self.comm.Get_rank()
