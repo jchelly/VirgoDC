@@ -11,6 +11,9 @@ import gc
 # Type to use for global indexes
 index_dtype = np.int64
 
+# Default algorithm for alltoallv function
+default_alltoallv_method = "hypercube"
+
 
 def mpi_datatype(dtype):
     """
@@ -33,12 +36,16 @@ def mpi_datatype(dtype):
 
 def my_alltoallv(sendbuf, send_count, send_offset,
                  recvbuf, recv_count, recv_offset,
-                 comm=None):
+                 comm=None, method=None):
     """
     Alltoallv implemented using sendrecv calls. Avoids problems
     caused when some ranks send or receive more than 2^31
     elements by splitting communications.
     """
+
+    # Determine method to use
+    if method is None:
+        method = default_alltoallv_method
     
     # Maximum number of elements per message: avoid messages > 2GB
     assert sendbuf.dtype == recvbuf.dtype
@@ -58,30 +65,66 @@ def my_alltoallv(sendbuf, send_count, send_offset,
     mpi_type_send = mpi_datatype(sendbuf.dtype)
     mpi_type_recv = mpi_datatype(recvbuf.dtype)
 
-    # Loop over pairs of processes and send data
-    for ngrp in range(2**ptask):
-        rank = comm_rank ^ ngrp
-        if rank < comm_size:
-            # Offsets to next block to send
-            current_send_offset = send_offset[rank]
-            left_to_send        = send_count[rank]
+    if method == "hypercube":
+        #
+        # Loop over pairs of processes and sendrecv() data
+        #
+        for ngrp in range(2**ptask):
+            rank = comm_rank ^ ngrp
+            if rank < comm_size:
+                # Offsets to next block to send
+                current_send_offset = send_offset[rank]
+                left_to_send        = send_count[rank]
+                current_recv_offset = recv_offset[rank]
+                left_to_recv        = recv_count[rank]
+                # Loop until all data has been sent
+                while left_to_send > 0 or left_to_recv > 0:
+                    # Find number to send this time
+                    num_to_send = min((left_to_send, nchunk))
+                    num_to_recv = min((left_to_recv, nchunk))
+                    # Transfer the data
+                    send_buf_spec = [sendbuf[current_send_offset:current_send_offset+num_to_send], mpi_type_send]
+                    recv_buf_spec = [recvbuf[current_recv_offset:current_recv_offset+num_to_recv], mpi_type_recv]
+                    comm.Sendrecv(send_buf_spec, rank, 0, recv_buf_spec, rank, 0)
+                    # Update counts and offsets
+                    left_to_send        -= num_to_send
+                    current_send_offset += num_to_send
+                    left_to_recv        -= num_to_recv
+                    current_recv_offset += num_to_recv
+    elif method == "async":
+        #
+        # Post non-blocking receives
+        #
+        receives = []
+        for rank in range(comm_size):
             current_recv_offset = recv_offset[rank]
             left_to_recv        = recv_count[rank]
-            # Loop until all data has been sent
-            while left_to_send > 0 or left_to_recv > 0:
-                # Find number to send this time
-                num_to_send = min((left_to_send, nchunk))
+            while left_to_recv > 0:
                 num_to_recv = min((left_to_recv, nchunk))
-                # Transfer the data
-                send_buf_spec = [sendbuf[current_send_offset:current_send_offset+num_to_send], mpi_type_send]
                 recv_buf_spec = [recvbuf[current_recv_offset:current_recv_offset+num_to_recv], mpi_type_recv]
-                comm.Sendrecv(send_buf_spec, rank, 0, recv_buf_spec, rank, 0)
-                # Update counts and offsets
-                left_to_send        -= num_to_send
-                current_send_offset += num_to_send
+                receives.append(comm.Irecv(recv_buf_spec, rank))
                 left_to_recv        -= num_to_recv
                 current_recv_offset += num_to_recv
-
+        #
+        # Post non-blocking sends
+        #
+        sends = []
+        for rank in range(comm_size):
+            current_send_offset = send_offset[rank]
+            left_to_send        = send_count[rank]
+            while left_to_send > 0:
+                num_to_send = min((left_to_send, nchunk))
+                send_buf_spec = [sendbuf[current_send_offset:current_send_offset+num_to_send], mpi_type_send]
+                sends.append(comm.Isend(send_buf_spec, rank))
+                left_to_send        -= num_to_send
+                current_send_offset += num_to_send
+        #
+        # Wait for everything to complete
+        #
+        MPI.Request.Waitall(sends+receives)
+    else:
+        raise ValueError("Unrecognised value of method parameter for alltoall")
+        
     mpi_type_send.Free()
     mpi_type_recv.Free()
 
