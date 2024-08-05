@@ -1217,18 +1217,32 @@ class HashMatcher:
     def destination_rank(self, arr):
         if arr.dtype.itemsize == 4:
             arr_view = arr.view(dtype=np.uint32)
-            arr_hash = np.bitwise_xor(np.right_shift(arr_view, 16), arr_view) * 0x45d9f3b
-            arr_hash = np.bitwise_xor(np.right_shift(arr_hash, 16), arr_hash) * 0x45d9f3b
+            arr_hash = np.bitwise_xor(np.right_shift(arr_view, 16), arr_view)
+            arr_hash *= 0x45d9f3b
+            arr_hash = np.bitwise_xor(np.right_shift(arr_hash, 16), arr_hash)
+            arr_hash *= 0x45d9f3b
             arr_hash = np.bitwise_xor(np.right_shift(arr_hash, 16), arr_hash)
         elif arr.dtype.itemsize == 8:
             arr_view = arr.view(dtype=np.uint64)
-            arr_hash = np.bitwise_xor(arr_view, np.right_shift(arr_view, 30)) * 0xbf58476d1ce4e5b9
-            arr_hash = np.bitwise_xor(arr_hash, np.right_shift(arr_hash, 27)) * 0x94d049bb133111eb
+            arr_hash = np.bitwise_xor(arr_view, np.right_shift(arr_view, 30))
+            arr_hash *= 0xbf58476d1ce4e5b9
+            arr_hash = np.bitwise_xor(arr_hash, np.right_shift(arr_hash, 27))
+            arr_hash *= 0x94d049bb133111eb
             arr_hash = np.bitwise_xor(arr_hash, np.right_shift(arr_hash, 31))
-            return np.mod(arr_hash, self.comm_size).astype(int)
         else:
             raise RuntimeError("Unsupported data type: must be 4 or 8 bytes per element")
-        
+        return np.mod(arr_hash, self.comm_size).astype(int)
+
+    def chunked_destination_rank(self, arr):
+        result = np.ndarray(len(arr), dtype=int)
+        chunksize = 1024
+        i1 = 0
+        while i1 < len(arr):
+            i2 = min(i1+chunksize, len(arr))
+            result[i1:i2] = self.destination_rank(arr[i1:i2])
+            i1 = i1 + chunksize
+        return result
+            
     def __init__(self, arr2, comm=None):
         """
         Initialize a new hash matcher.
@@ -1251,7 +1265,7 @@ class HashMatcher:
         
         # Get destination rank for each element
         arr2 = np.asanyarray(arr2)
-        arr2_dest = self.destination_rank(arr2)
+        arr2_dest = self.chunked_destination_rank(arr2)
 
         # Find global index of first arr2 element on each rank:
         # This is just the number of elements on previous ranks.
@@ -1259,30 +1273,40 @@ class HashMatcher:
 
         # Get sorting order by destination
         arr2_order = my_argsort(arr2_dest)
-    
-        # Find range of elements to go to each destination when sorted by destination
-        arr2_send_count  = np.bincount(arr2_dest, minlength=self.comm_size)
-        arr2_send_offset = np.cumsum(arr2_send_count) - arr2_send_count
-        del arr2_dest
-    
+
         # Get arr2 global indexes ordered by destination
         arr2_index = np.arange(len(arr2), dtype=index_dtype) + arr2_global_offset
         arr2_index = arr2_index[arr2_order]
-
-        # Get arr2 values ordered by destination
+        
+        # Sort arr2 values by destination
         arr2 = arr2[arr2_order]
+        arr2_dest = arr2_dest[arr2_order]
         del arr2_order
 
+        # Find range of elements to go to each destination
+        arr2_send_offset = np.searchsorted(arr2_dest, np.arange(self.comm_size, dtype=int), side="left")
+        arr2_send_count = np.empty_like(arr2_send_offset)
+        arr2_send_count[:-1] = arr2_send_offset[1:] - arr2_send_offset[:-1]
+        arr2_send_count[-1] = len(arr2) - arr2_send_offset[-1]
+        del arr2_dest
+        assert np.sum(arr2_send_count) == len(arr2)
+        assert np.all(np.cumsum(arr2_send_count) - arr2_send_count == arr2_send_offset)
+        
         # Move arr2 values and indexes to destination
         self.arr2 = alltoall_exchange(arr2, arr2_send_count, comm=self.comm)
         self.arr2_index = alltoall_exchange(arr2_index, arr2_send_count, comm=self.comm)
-        assert np.all(self.destination_rank(self.arr2)==self.comm_rank)
 
         # Sort arr2 values by value
-        order = np.argsort(self.arr2)
+        order = my_argsort(self.arr2)
         self.arr2 = self.arr2[order]
         self.arr2_index = self.arr2_index[order]
-        
+
+        # Report balance
+        min_nr = self.comm.allreduce(len(self.arr2), op=MPI.MIN)
+        max_nr = self.comm.allreduce(len(self.arr2), op=MPI.MAX)
+        if self.comm_rank == 0:
+            print(f"min, max = {min_nr}, {max_nr}")
+            
     def match(self, arr1):
         """
         Return the global index in arr2 of each value in arr1
@@ -1292,35 +1316,44 @@ class HashMatcher:
         arr1 = np.asanyarray(arr1)
 
         # Get destination rank for each element
-        arr1_dest = self.destination_rank(arr1)
+        arr1_dest = self.chunked_destination_rank(arr1)
 
         # Get sorting order by destination
-        arr1_order = np.argsort(arr1_dest)
-
-        # Find range of elements to go to each destination when sorted by destination
-        arr1_send_count  = np.bincount(arr1_dest, minlength=self.comm_size)
-        arr1_send_offset = np.cumsum(arr1_send_count) - arr1_send_count
-        del arr1_dest
-
-        # Allocate output array
-        match_index = -np.ones(len(arr1), dtype=index_dtype)
+        arr1_order = my_argsort(arr1_dest)
 
         # Construct sorted send buffer for arr1 elements
         arr1_sendbuf = arr1[arr1_order]
-
+        arr1_dest = arr1_dest[arr1_order]
+        
+        # Find range of elements to go to each destination when sorted by destination
+        arr1_send_offset = np.searchsorted(arr1_dest, np.arange(self.comm_size, dtype=int), side="left")
+        arr1_send_count = np.empty_like(arr1_send_offset)
+        arr1_send_count[:-1] = arr1_send_offset[1:] - arr1_send_offset[:-1]
+        arr1_send_count[-1] = len(arr1) - arr1_send_offset[-1]
+        del arr1_dest
+        assert np.sum(arr1_send_count) == len(arr1)
+        assert np.all(np.cumsum(arr1_send_count) - arr1_send_count == arr1_send_offset)
+        
         # Exchange arr1 elements
         arr1_recvbuf = alltoall_exchange(arr1_sendbuf, arr1_send_count, comm=self.comm)
-        assert np.all(self.destination_rank(arr1_recvbuf)==self.comm_rank)
+        del arr1_sendbuf
 
         # For each imported arr1 element, find the index of the matching arr2 element
-        import virgo.util.match
-        ptr = virgo.util.match.match(arr1_recvbuf, self.arr2, arr2_sorted=True)
+        ptr = np.searchsorted(self.arr2, arr1_recvbuf, side="left")
+        np.clip(ptr, 0, len(self.arr2)-1, out=ptr)
+        if len(self.arr2) > 0:
+            ptr[self.arr2[ptr] != arr1_recvbuf] = -1
+        else:
+            # arr2 has zero size so there cannot be any matches
+            ptr[:] = -1
         arr1_recvbuf_index = -np.ones(arr1_recvbuf.shape, dtype=index_dtype)
         arr1_recvbuf_index[ptr>=0] = self.arr2_index[ptr[ptr>=0]]
-
+        del ptr
+        
         # Reverse exchange the indexes
-        arr1_sendbuf_index =  alltoall_exchange(arr1_recvbuf_index, arr1_send_count, comm=self.comm, reverse=True)
-
+        arr1_sendbuf_index = alltoall_exchange(arr1_recvbuf_index, arr1_send_count, comm=self.comm, reverse=True)
+        del arr1_recvbuf_index
+        
         # Return the result in the same order as arr1
         match_index = -np.ones(len(arr1), dtype=index_dtype)
         match_index[arr1_order] = arr1_sendbuf_index
