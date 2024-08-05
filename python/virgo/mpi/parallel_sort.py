@@ -1359,3 +1359,126 @@ class HashMatcher:
         match_index[arr1_order] = arr1_sendbuf_index
 
         return match_index
+
+    
+class SortMatcher:
+    """
+    Class for matching integers between pairs of arrays.
+
+    This is similar to parallel_match(arr1, arr2) in that for each element
+    in arr1 it returns the index of a matching element in arr2, or -1 if no
+    match is found.
+
+    Instantiating the class redistributes arr2 over MPI ranks in sorted
+    order so that we can carry out repeated searches of arr2 with different
+    arr1.
+    """
+
+    def __init__(self, arr2, arr2_sorted=False, comm=None):
+        """
+        Initialize a new sort matcher.
+
+        arr2 - the array of values we will be matching to
+        comm - the MPI communicator to use
+
+        This moves array elements to an MPI rank based on their value
+        so that we can efficiently search for values later.
+        """
+        
+        # Get communicator to use
+        from mpi4py import MPI
+        if comm is None:
+            comm = MPI.COMM_WORLD
+        self.comm = comm
+        self.comm_rank = comm.Get_rank()
+        self.comm_size = comm.Get_size()
+    
+        # Ensure input is array-like
+        arr2 = np.asanyarray(arr2)
+
+        # Make a sorted copy of arr2 if necessary
+        if not(arr2_sorted):
+            self.arr2 = arr2.copy()
+            sort_arr2 = parallel_sort(self.arr2, return_index=True, comm=self.comm)
+        else:
+            self.arr2 = arr2
+        del arr2
+            
+        # Make array of initial indexes of arr2 elements and arrange in sorted order
+        n_per_task = np.asarray(self.comm.allgather(self.arr2.shape[0]), dtype=index_dtype)
+        first_on_task = np.cumsum(n_per_task) - n_per_task
+        self.arr2_index = np.arange(self.arr2.shape[0], dtype=index_dtype) + first_on_task[self.comm_rank]
+        if not(arr2_sorted):
+            self.arr2_index = fetch_elements(self.arr2_index, sort_arr2, comm=self.comm)
+            del sort_arr2
+
+        # Find range of arr2 values on each task after sorting
+        self.min_on_task = np.ndarray(self.comm_size, dtype=self.arr2.dtype)
+        self.max_on_task = np.ndarray(self.comm_size, dtype=self.arr2.dtype)
+        if self.arr2.shape[0] > 0:
+            min_val = np.amin(self.arr2)
+            max_val = np.amax(self.arr2)
+        else:
+            # If there are no values set min and max to zero
+            min_val = np.asarray(0, dtype=self.arr2.dtype)
+            max_val = np.asarray(0, dtype=self.arr2.dtype)
+        comm.Allgather(min_val, self.min_on_task)
+        comm.Allgather(max_val, self.max_on_task)
+        # Record which tasks have >0 arr2 elements
+        self.have_arr2 = np.asarray(self.comm.allgather(self.arr2.shape[0] > 0), dtype=bool)
+
+    def match(self, arr1):
+        """
+        Return the global index in arr2 of each value in arr1
+        """
+
+        # Sort local arr1 values
+        idx = my_argsort(arr1)
+        arr1_sendbuf = arr1[idx]
+
+        # Decide which elements of arr1 to send to which tasks.
+        # Handle duplicate values in arr2 by sending to lowest numbered task.
+        send_displ      = np.searchsorted(arr1_sendbuf, self.min_on_task[self.have_arr2], side="left")
+        send_displ_next = np.searchsorted(arr1_sendbuf, self.max_on_task[self.have_arr2], side="right")
+        send_count_all = np.zeros(self.comm_size, dtype=int)
+        send_count_all[self.have_arr2] = send_displ_next - send_displ
+        send_displ_all = np.zeros(self.comm_size, dtype=int)
+        send_displ_all[self.have_arr2] = send_displ
+        assert np.sum(send_count_all) <= arr1_sendbuf.shape[0]
+
+        # Compute receive counts and offsets
+        recv_count_all = np.ndarray(self.comm_size, dtype=index_dtype)
+        self.comm.Alltoall(send_count_all, recv_count_all)
+        recv_displ_all = np.cumsum(recv_count_all) - recv_count_all
+        
+        # Exchange arr1 elements
+        arr1_recvbuf = np.ndarray(sum(recv_count_all), dtype=arr1.dtype)
+        my_alltoallv(arr1_sendbuf, send_count_all, send_displ_all,
+                     arr1_recvbuf, recv_count_all, recv_displ_all,
+                     comm=self.comm)
+        del arr1_sendbuf
+        
+        # For each imported arr1 element, find global rank of matching arr2 element
+        ptr = np.searchsorted(self.arr2, arr1_recvbuf, side="left")
+        np.clip(ptr, 0, len(self.arr2)-1, out=ptr)
+        if len(self.arr2) > 0:
+            ptr[self.arr2[ptr] != arr1_recvbuf] = -1
+        else:
+            # arr2 has zero size so there cannot be any matches
+            ptr[:] = -1
+        arr1_recvbuf_index = -np.ones(arr1_recvbuf.shape, dtype=index_dtype)
+        arr1_recvbuf_index[ptr>=0] = self.arr2_index[ptr[ptr>=0]]
+        del ptr
+
+        # Reverse exchange the indexes
+        arr1_sendbuf_index = -np.ones(len(arr1), dtype=index_dtype)
+        my_alltoallv(arr1_recvbuf_index, recv_count_all, recv_displ_all,
+                     arr1_sendbuf_index, send_count_all, send_displ_all,
+                     comm=self.comm)
+        del arr1_recvbuf_index
+                
+        # Return result in original order
+        index = np.ndarray(len(arr1), dtype=index_dtype)
+        index[idx] = arr1_sendbuf_index
+        
+        return index
