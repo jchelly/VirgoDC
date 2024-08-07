@@ -1,56 +1,27 @@
-# Examples and read routines for the Virgo Data Centre
+# Virgo python module
 
-## Virgo python module
+## Introduction
 
-### Introduction
+This module provides facilities for reading various formats used to store
+snapshots, group catalogues and merger trees in Virgo Consortium simulations,
+including older binary formats which can otherwise be difficult to deal with.
 
-This is a module which provides facilities for reading the various binary 
-formats used to store simulation snapshots, group catalogues and merger trees
-in Virgo Consortium simulations.
+It also provides a collection of MPI parallel algorithms which can be useful
+for dealing with particle data and a few related utility functions.
 
-The interface to these read routines is modelled on h5py. Quantities to read
-are specified by name and subsets of arrays can be read in using numpy style array
-indexing. This is implemented by memory mapping the input file and creating numpy
-arrays which use the appropriate section of the file as their data buffer.
+## Installation
 
-For example, to open a subhalo_tab file from one of the Aquarius simulations:
+This module requires mpi4py and h5py. On a HPC system these may need to be
+built from source to ensure they're linked to the right MPI implementation.
 
-```
-import virgo.formats.subfind_pgadget3 as subfind
-
-fname = "/virgo/simulations/Aquarius/Aq-A/4/groups_1023/subhalo_tab_1023.0"
-subtab = subfind.SubTabFile(fname, id_bytes=4)
-subtab.sanity_check()
-```
-
-Some formats require parameters such as the size of the particle IDs to be specified
-before the file can be read. A 'sanity_check()' method is provided which will attempt 
-to raise an exception if these parameters are set incorrectly.
-
-Data can then be read from the file as if it were a h5py.File object:
-```
-subhalo_pos = subtab["SubPos"][...]
-subhalo_vel = subtab["SubVel"][...]
-```
-The .keys() method can be used to see what quantities exist in the file:
-```
-print subtab.keys()
-```
-
-
-### Installation
-
-#### Installation of dependencies
-
-The parallel_sort and parallel_hdf5 modules require mpi4py and h5py. On a HPC system
-these may need to be built from source to ensure they're linked to the right MPI implementation.
-
-To install mpi4py, ensure that the right mpicc is in your $PATH (e.g. by loading environment modules) and run
+To install mpi4py, ensure that the right mpicc is in your $PATH (e.g. by
+loading environment modules) and run
 ```
 python -m pip install mpi4py
 ```
 
-To install h5py, if the right mpicc is in your $PATH and HDF5 is installed at $HDF5_HOME:
+To install h5py, if the right mpicc is in your $PATH and HDF5 is installed at
+$HDF5_HOME:
 ```
 export CC="mpicc"
 export HDF5_MPI="ON"
@@ -63,17 +34,14 @@ Running the tests requires pytest-mpi:
 pip install pytest-mpi
 ```
 
-#### Installing the module
-
-To install the module in your home directory:
+The module can then be installed using pip:
 ```
-cd VirgoDC/python
-pip install . --user
+pip install virgodc
 ```
 
-### Layout of the module
+## Layout of the module
 
-  * virgo.formats: contains classes for reading various binary simulation data formats
+  * virgo.formats: contains classes for reading various simulation data formats
   * virgo.sims: contains wrappers for the read routines with appropriate default parameters for particular simulations
   * virgo.util: contains utility functions which may be useful when working with simulation data, including
     * the BinaryFile class, which allows for reading binary files using a HDF5-like interface
@@ -81,10 +49,54 @@ pip install . --user
     * a vectorized python implementation of the peano_hilbert_key function from Gadget
   * virgo.mpi: utilities for working with simulation data using mpi4py, including a reasonably efficient MPI parallel sort and functions for parallel I/O on multi-file simulation output
 
+## Supported data formats
 
-### Reading simulation data
+### SWIFT snapshots
 
-#### Gadget snapshots
+For a more complete solution for reading SWIFT snapshots, see
+[swiftsimio](https://swiftsimio.readthedocs.io/en/latest/).
+
+This module provides a simple class for reading SWIFT snapshots which is
+essentially a h5py.File that returns arrays with units attached when datasets
+are read. A snapshot can be opened as follows:
+```
+from virgo.formats.swift import SwiftSnapshot
+snap = SwiftSnapshot("snapshot_0010.hdf5")
+```
+To read a dataset we can index the snapshot object as with a h5py.File:
+```
+>>> pos = snap["PartType0/Coordinates"][...]
+>>> print(pos)
+[[ 34.47785792 565.96551792 409.66667792]
+ [ 32.55394792 563.85734792 409.80881792]
+ [ 32.65551792 562.94646792 408.11432792]
+ ...
+ [342.2256186  812.0977686  468.7078186 ]
+ [342.0442786  812.3124186  467.4161186 ]
+ [342.0407086  811.3151886  467.6265686 ]] Mpc (Comoving)
+```
+
+By default units are defined using the same scheme as swiftsimio and results
+are returned as swiftsimio cosmo_array objects. Alternatively, if the snapshot
+is opened using `mode="soap"` then the module defines units `snap_length`,
+`snap_mass` etc corresponding to the units used in the snapshot and results
+are returned in terms of these units. Comoving quantities are handled by
+defining a constant `a` to represent the expansion factor. E.g. comoving
+positions would have units `a*snap_length`. This avoids any issues due to
+SWIFT and unyt having different definitions of a parsec or solar mass.
+
+### SOAP halo catalogues
+
+Halo catalogues generated using the SOAP tool can be read in a similar way:
+```
+from virgo.formats.soap import SOAPCatalogue
+cat = SOAPCatalogue("halo_properties_0077.hdf5")
+total_mass = cat["SO/200_crit/TotalMass"][...]
+```
+This returns a cosmo_array, or a unyt array using the `snap_*` unit scheme
+described above if the catalogue was opened with `mode="soap"`.
+
+### Gadget snapshots
 
 The function virgo.formats.gadget_snapshot.open() can be used to read Gadget snapshots
 stored in either HDF5 or type 1 binary format. When opening a snapshot file it returns
@@ -101,7 +113,7 @@ pos     = snap["PartType1/Coordinates"][...]
 vel     = snap["PartType1/Velocities"][...]
 ```
 
-#### Friends-of-Friends and Subfind output
+### Gadget Friends-of-Friends and Subfind output
 
 The following modules contains classes to read subfind and friends of friends output from several versions of Gadget:
 
@@ -130,7 +142,7 @@ See the docstrings associated with each class to determine which parameters are 
 In most cases calling the sanity_check() method on the object will raise an exception if any parameters
 were set incorrectly.
 
-### MPI Parallel Sorting and Matching Functions
+## MPI parallel algorithms
 
 Working with halo finder output often requires matching particle IDs between
 the halo finder output files and simulation snapshots.
@@ -147,7 +159,7 @@ All of these functions are collective and must be executed an all MPI ranks in
 the specified communicator `comm`, or `MPI_COMM_WORLD` if the `comm` parameter
 is not supplied.
 
-#### Repartitioning a distributed array
+### Repartitioning a distributed array
 
 ```
 virgo.mpi.parallel_sort.repartition(arr, ndesired, comm=None)
@@ -163,7 +175,7 @@ MPI_COMM_WORLD is used if comm is not set.
 If `arr` is multidimensional then the repartitioning is done along the first
 axis.
 
-#### Fetching specified elements of a distributed array
+### Fetching specified elements of a distributed array
 
 ```
 virgo.mpi.parallel_sort.fetch_elements(arr, index, result=None, comm=None)
@@ -180,7 +192,7 @@ If `arr` is multidimensional then the index is taken to refer to the first
 axis. I.e. if running with only one MPI rank the function would return
 `arr[index,...]`.
 
-#### Sorting
+### Sorting
 
 ```
 virgo.mpi.parallel_sort.parallel_sort(arr, comm=None, return_index=False, verbose=False)
@@ -202,7 +214,7 @@ although there are some differences. For example, the final merging of sorted
 array sections is done using a full sort due to the lack of an optimized merge
 function in numpy.
 
-#### Finding matching values between two arrays
+### Finding matching values between two arrays
 
 ```
 virgo.mpi.parallel_sort.parallel_match(arr1, arr2, arr2_sorted=False, comm=None)
@@ -217,7 +229,7 @@ but `arr2` is not really sorted.
 
 Both input arrays must be one dimensional.
 
-#### Finding unique values
+### Finding unique values
 
 ```
 virgo.mpi.parallel_sort.parallel_unique(arr, comm=None, arr_sorted=False,
@@ -236,7 +248,7 @@ have approximately equal numbers of elements on each MPI rank.
 
 The input array must be one dimensional.
 
-#### Parallel bin count
+### Parallel bin count
 
 ```
 virgo.mpi.parallel_sort.parallel_bincount(x, weights=None, minlength=None,
@@ -254,7 +266,7 @@ with each integer value.
 `minlength` specifies the minimum size of the output array and `result`
 allows the function to write its output to an existing array.
 
-#### MPI Alltoallv function
+### MPI Alltoallv function
 
 ```
 virgo.mpi.parallel_sort.my_alltoallv(sendbuf, send_count, send_offset,
@@ -275,7 +287,7 @@ with large (>2GB) communications and can handle any numpy type that the mpi4py
   * `recv_offset` - offset of the first element to receive from each rank
   * `comm` - specifes the communicator to use (MPI_COMM_WORLD if not set)
 
-#### Tests
+### Tests
 
 The parallel_sort module includes several tests, which can be run with
 pytest-mpi:
@@ -293,14 +305,14 @@ where N is the number of elements per rank to sort. This sorts an array of
 random integers and checks that the result is in order and contains the same
 number of instances of each value as the input.
 
-### MPI I/O Functions
+## MPI I/O Functions
 
 The module virgo.mpi.parallel_hdf5 contains functions for reading and writing
 distributed arrays stored in sets of HDF5 files, using MPI collective I/O
 where possible. These can be useful for reading simulation snapshots and halo
 finder output.
 
-#### Collective HDF5 Read
+### Collective HDF5 Read
 
 ```
 virgo.mpi.parallel_hdf5.collective_read(dataset, comm)
@@ -315,7 +327,7 @@ axis.
 Reads are chunked if necessary to avoid problems with the underlying MPI
 library failing to handle reads of >2GB.
 
-#### Collective HDF5 Write
+### Collective HDF5 Write
 
 ```
 virgo.mpi.parallel_hdf5.collective_write(group, name, data, comm, create_dataset=True)
@@ -331,9 +343,9 @@ underlying MPI library failing to handle writes of >2GB.
 
 Returns the new (or modified) h5py.Dataset object.
 
-#### Multi-file Parallel I/O
+### Multi-file Parallel I/O
 
-##### The MultiFile class
+#### The MultiFile class
 
 ```
 virgo.mpi.parallel_hdf5.MultiFile.__init__(self, filenames, file_nr_attr=None,
@@ -368,7 +380,7 @@ The class takes the following parameters:
 Exactly one of `file_nr_attr`, `file_nr_dataset` and `file_idx` must be
 specified if `filenames` is not a list of strings.
 
-##### Reading datasets from a file set
+#### Reading datasets from a file set
 
 ```
 virgo.mpi.parallel_hdf5.MultiFile.read(self, datasets, group=None,
@@ -410,7 +422,7 @@ can be reduced to
 pos, vel = mf.read(("Positions", "Velocities"), unpack=True)
 ```
 
-##### Reading the number of dataset elements per file
+#### Reading the number of dataset elements per file
 
 ```
 virgo.mpi.parallel_hdf5.MultiFile.get_elements_per_file(self, name, group=None)
@@ -426,7 +438,7 @@ distributed between files in the same way as an input file set.
   * `name` - name of the dataset
   * `group` - name of the group containing the dataset
 
-##### Writing datasets to a file set
+#### Writing datasets to a file set
 
 ```
 virgo.mpi.parallel_hdf5.MultiFile.write(self, data, elements_per_file,
@@ -462,12 +474,12 @@ TODO: make elements_per_file actually reflect the number of elements per file
 and implement automatic repartitioning of the input so that arbitrary values
 of elements_per_file will work as expected.
 
-### MPI Utility Functions
+## MPI Utility Functions
 
 The module virgo.mpi.util contains several other functions which are helpful
 for dealing with simulation and halo finder output.
 
-#### Computing particle group membership from Subfind lengths and offsets
+### Computing particle group membership from Subfind lengths and offsets
 
 ```
 virgo.mpi.util.group_index_from_length_and_offset(length, offset,
@@ -499,7 +511,7 @@ If the parameter return_rank=True then it also returns an array with the
 rank ordering of each particle in its halo, with zero indicating the first
 particle in the halo. 
 
-#### Allocating zero-sized arrays on ranks with no data
+### Allocating zero-sized arrays on ranks with no data
 
 Gadget snapshots typically omit HDF5 datasets which would have zero size (e.g.
 if some files in a snapshot happen to have zero star particles). This can be an
@@ -522,7 +534,7 @@ The intended use of this function is to allow read routines to return None
 where datasets do not exist and then this function can be used to retrieve the
 missing metadata.
 
-#### MPI argument parser
+### MPI argument parser
 
 virgo.mpi.util.MPIArgumentParser is a subclass of argparse.ArgumentParser for
 use in MPI programs. It parses arguments on rank 0 of the supplied communicator
