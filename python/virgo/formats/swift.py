@@ -38,16 +38,17 @@ def soap_unit_registry_from_snapshot(snap):
     # Create a new registry
     reg = unyt.unit_registry.UnitRegistry()
 
-    # Define code and snapshot base units
+    # Define snapshot base units and code units (if present)
     for group_name, prefix in (("Units", "snap"),
                                ("InternalCodeUnits", "code")):
-        units_cgs = {name : float(value) for name, value in snap[group_name].attrs.items()}
-        unyt.define_unit(prefix+"_length",      units_cgs["Unit length in cgs (U_L)"]*unyt.cm,     registry=reg)
-        unyt.define_unit(prefix+"_mass",        units_cgs["Unit mass in cgs (U_M)"]*unyt.g,        registry=reg)
-        unyt.define_unit(prefix+"_time",        units_cgs["Unit time in cgs (U_t)"]*unyt.s,        registry=reg)
-        unyt.define_unit(prefix+"_temperature", units_cgs["Unit temperature in cgs (U_T)"]*unyt.K, registry=reg)
-        unyt.define_unit(prefix+"_angle",       1.0*unyt.rad,                                      registry=reg)
-        unyt.define_unit(prefix+"_current",     units_cgs["Unit current in cgs (U_I)"]*unyt.A,     registry=reg)
+        if group_name in snap:
+            units_cgs = {name : float(value) for name, value in snap[group_name].attrs.items()}
+            unyt.define_unit(prefix+"_length",      units_cgs["Unit length in cgs (U_L)"]*unyt.cm,     registry=reg)
+            unyt.define_unit(prefix+"_mass",        units_cgs["Unit mass in cgs (U_M)"]*unyt.g,        registry=reg)
+            unyt.define_unit(prefix+"_time",        units_cgs["Unit time in cgs (U_t)"]*unyt.s,        registry=reg)
+            unyt.define_unit(prefix+"_temperature", units_cgs["Unit temperature in cgs (U_T)"]*unyt.K, registry=reg)
+            unyt.define_unit(prefix+"_angle",       1.0*unyt.rad,                                      registry=reg)
+            unyt.define_unit(prefix+"_current",     units_cgs["Unit current in cgs (U_I)"]*unyt.A,     registry=reg)
 
     # Add the expansion factor as a dimensionless "unit"
     unyt.define_unit("a", a, dim.dimensionless, registry=reg)
@@ -68,7 +69,7 @@ def soap_unit_registry_from_snapshot(snap):
     # Create a registry using this base unit system
     reg = unyt.unit_registry.UnitRegistry(lut=reg.lut, unit_system=us)
 
-    # Add some units which might be useful for dealing with VR data
+    # Add some other units which might be useful
     unyt.define_unit("swift_mpc",  1.0e6*physical_constants_cgs["parsec"]*unyt.cm, registry=reg)
     unyt.define_unit("swift_msun", physical_constants_cgs["solar_mass"]*unyt.g, registry=reg)
     unyt.define_unit("newton_G", physical_constants_cgs["newton_G"]*unyt.cm**3/unyt.g/unyt.s**2, registry=reg)
@@ -146,13 +147,12 @@ def swiftsimio_units(group):
     swiftsimio units object.
 
     This is useful for SOAP output, where the unit information
-    is in a sub-group in the file.
+    may be in a sub-group in the file.
     """
     
     buf = io.BytesIO()
     with h5py.File(buf, 'w') as tmpfile: 
         group.copy("Cosmology", tmpfile)
-        group.copy("InternalCodeUnits", tmpfile)
         group.copy("PhysicalConstants", tmpfile)
         group.copy("Units", tmpfile)
     return swiftsimio.reader.SWIFTUnits(buf)

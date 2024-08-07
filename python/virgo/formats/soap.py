@@ -10,6 +10,6 @@ class SOAPCatalogue(SwiftFile):
     open SOAP file.
     """
     def __init__(self, *args, mode="swiftsimio", **kwargs): 
-        metadata_path="SWIFT"
+        metadata_path="/"
         super(SOAPCatalogue, self).__init__(mode, metadata_path, *args, **kwargs)
 
