@@ -254,7 +254,7 @@ class SwiftBaseWrapper(Mapping):
 
 class SwiftDataset(SwiftBaseWrapper):
     
-    def __init__(self, obj, mode="swiftsimio"):
+    def __init__(self, obj, mode="soap"):
         """
         This handles opening a dataset. We need to read the dataset
         specific metadata attributes and store them.
@@ -351,6 +351,6 @@ class SwiftSnapshot(SwiftFile):
     This is a wrapper around the h5py.File object for an
     open snapshot file.
     """
-    def __init__(self, *args, mode="swiftsimio", **kwargs): 
+    def __init__(self, *args, mode="soap", **kwargs): 
         metadata_path="/"
         super(SwiftSnapshot, self).__init__(mode, metadata_path, *args, **kwargs)
