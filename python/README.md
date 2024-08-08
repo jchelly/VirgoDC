@@ -73,17 +73,40 @@ To read a dataset we can index the snapshot object as with a h5py.File:
  ...
  [342.2256186  812.0977686  468.7078186 ]
  [342.0442786  812.3124186  467.4161186 ]
- [342.0407086  811.3151886  467.6265686 ]] Mpc (Comoving)
+ [342.0407086  811.3151886  467.6265686 ]] a*snap_length)
 ```
 
-By default units are defined using the same scheme as swiftsimio and results
-are returned as swiftsimio cosmo_array objects. Alternatively, if the snapshot
-is opened using `mode="soap"` then the module defines units `snap_length`,
-`snap_mass` etc corresponding to the units used in the snapshot and results
-are returned in terms of these units. Comoving quantities are handled by
-defining a constant `a` to represent the expansion factor. E.g. comoving
-positions would have units `a*snap_length`. This avoids any issues due to
-SWIFT and unyt having different definitions of a parsec or solar mass.
+#### Units
+
+When reading a snapshot the module defines several custom unyt units:
+  * `snap_length`: the length unit used in the snapshot
+  * `snap_mass`: the mass unit used in the snapshot
+  * `snap_time`: the time unit used in the snapshot
+  * `snap_temperature`: the temperature unit used in the snapshot
+  * `a` : the expansion factor of this snapshot
+  * `h` : the Hubble parameter used in the simulation
+
+Reading a dataset returns a unyt array using these base units. A comoving
+position, for example, would have units `a*snap_length` and a velocity would
+have units `snap_length/snap_time`.
+
+It also defines several symbols based on SWIFT's physical constants:
+  * `swift_mpc` : SWIFT's definition of a megaparsec
+  * `swift_msun` : SWIFT's definition of a solar mass
+  * `newton_G` : the gravitational constant used in the simulation
+
+To return positions in comoving Mpc regardless of the simulation unit system,
+for example, we could do:
+```
+pos = snap["PartType0/Coordinates"][...].to("a*swift_mpc")
+```
+This avoids any slight changes to the values due to SWIFT and unyt having
+different definitions of a parsec or the mass of the sun.
+
+#### Cosmology
+
+The SwiftSnapshot class has a cosmology field which returns an astropy
+cosmology object based on the parameters in the simulation snapshot.
 
 ### SOAP halo catalogues
 
@@ -93,8 +116,8 @@ from virgo.formats.soap import SOAPCatalogue
 cat = SOAPCatalogue("halo_properties_0077.hdf5")
 total_mass = cat["SO/200_crit/TotalMass"][...]
 ```
-This returns a cosmo_array, or a unyt array using the `snap_*` unit scheme
-described above if the catalogue was opened with `mode="soap"`.
+This returns a unyt array using unit scheme described above. The cosmology
+can be accessed in the same way too.
 
 ### Gadget snapshots
 
