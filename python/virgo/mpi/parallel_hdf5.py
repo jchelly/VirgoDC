@@ -98,7 +98,7 @@ def collective_read(dataset, comm, buffer_size=None):
     """
     Do a parallel collective read of a HDF5 dataset by splitting
     the dataset equally between MPI ranks along its first axis.
-    
+
     File must have been opened in MPI mode.
     """
 
@@ -326,7 +326,7 @@ class MultiFile:
 
         # Determine file names and number of files
         if isinstance(filenames, str):
-            
+
             # Filenames is a format string. Need to determine number of files.
             if file_idx is None:
                 # File indexes not specified, so read number of files from the first file
@@ -379,7 +379,7 @@ class MultiFile:
                     self.num_ranks    = num_ranks
                     break
             assert self.collective_file_nr is not None
-            
+
     def _read_independent(self, datasets, group=None, return_file_nr=None, read_attributes=False):
         """
         Read and concatenate arrays from multiple files,
@@ -403,7 +403,7 @@ class MultiFile:
         for i in range(first, first+num):
             filename = self.filenames[i]
             with h5py.File(filename, "r") as infile:
-                
+
                 # Find HDF5 group to read from
                 if group is None:
                     # No group was specified, so will use the file root group
@@ -441,6 +441,10 @@ class MultiFile:
             if len(data[name]) > 0:
                 if read_attributes:
                     attrs = data[name][0].attrs
+                if len(data[name]) > 1:
+                    for dset in data[name][1:]:
+                        if dset.dtype != data[name][0].dtype:
+                            raise RuntimeError(f"Inconsistent dtype for {name}")
                 data[name] = np.concatenate(data[name])
                 if read_attributes:
                     data[name] = AttributeArray(data[name], attrs=attrs)
@@ -518,14 +522,14 @@ class MultiFile:
 
                 # Store file number if needed
                 if return_file_nr is not None and name in return_file_nr:
-                    n = data[name].shape[0]                    
+                    n = data[name].shape[0]
                     file_nr[name] = np.ones(n, dtype=int)*self.all_file_indexes[self.collective_file_nr]
-                    
+
         infile.close()
         comm.Free()
 
         return data, file_nr
-        
+
     def read(self, datasets, group=None, return_file_nr=None, read_attributes=False, unpack=False):
         """
         Read and concatenate arrays from a set of one or more files, using
@@ -569,6 +573,14 @@ class MultiFile:
         if file_nr is not None:
             for name in file_nr:
                 file_nr[name] = virgo.mpi.util.replace_none_with_zero_size(file_nr[name], self.comm)
+
+        # Ensure all ranks have the same dtype
+        for name in data:
+            if data[name] is not None:
+                dtypes = self.comm.gather(data[name].dtype)
+                if self.comm.Get_rank() == 0:
+                    if len(set(dtypes)) != 1:
+                        raise RuntimeError(f"Inconsistent dtype for {name}")
 
         # Attributes may now be missing from any zero size arrays we created
         if read_attributes:
