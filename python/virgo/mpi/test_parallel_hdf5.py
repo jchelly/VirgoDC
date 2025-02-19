@@ -196,8 +196,16 @@ def test_collective_write_small_chunks_2d(tmp_path):
     for max_local_size in (1, 10, 100, 1000, 10000, 100000):
         do_collective_write(tmp_path, (max_local_size,3), buffer_size=256)
 
-def create_multi_file_output(tmp_path, basename, nr_files, elements_per_file,
-                             group=None, have_missing=False, attrs=None):
+def create_multi_file_output(
+        tmp_path,
+        basename,
+        nr_files,
+        elements_per_file,
+        group=None,
+        have_missing=False,
+        inconsistent_dtype=False,
+        attrs=None,
+    ):
     """
     Write an array distributed over multiple files
     """
@@ -219,6 +227,16 @@ def create_multi_file_output(tmp_path, basename, nr_files, elements_per_file,
         else:
             have_data = np.ones(nr_files, dtype=bool)
 
+        if inconsistent_dtype:
+            assert nr_files > 1
+            # Make sure at least one file is inconsistent, but not all
+            n_inconsistent = np.random.randint(1, nr_files)
+            inconsistent_file_nr = np.random.choice(
+                nr_files,
+                size=n_inconsistent,
+                replace=False,
+            )
+
         # Loop over files to create
         for file_nr in range(nr_files):
 
@@ -230,7 +248,12 @@ def create_multi_file_output(tmp_path, basename, nr_files, elements_per_file,
                 n = np.random.randint(2*elements_per_file)
             else:
                 n = 0
-            arr = np.random.uniform(low=-1.0e6, high=1.0e6, size=n)
+
+            # Set the datatype for this file
+            arr = np.random.uniform(low=-1.0e6, high=1.0e6, size=n).astype(np.float64)
+            if inconsistent_dtype:
+                if file_nr in inconsistent_file_nr:
+                    arr = arr.astype(np.float32)
 
             # Write the file
             with h5py.File(file_path, "w") as outfile:
@@ -320,7 +343,7 @@ def read_multi_file_output(tmp_path, basename, group=None, attrs=None):
     all_equal = comm.bcast(all_equal)
     assert all_equal, "Multi file output was not read correctly"
 
-def do_multi_file_test(tmp_path, basename, nr_files, elements_per_file, group=None, have_missing=False):
+def do_multi_file_test(tmp_path, basename, nr_files, elements_per_file, group=None, have_missing=False, inconsistent_dtype=False):
     """Create and read in a set of files"""
 
     from mpi4py import MPI
@@ -329,7 +352,7 @@ def do_multi_file_test(tmp_path, basename, nr_files, elements_per_file, group=No
 
     # Run test without attribues
     create_multi_file_output(tmp_path, basename, nr_files, elements_per_file, group=group,
-                             have_missing=have_missing, attrs=None)
+                             have_missing=have_missing, inconsistent_dtype=inconsistent_dtype, attrs=None)
     read_multi_file_output(tmp_path, basename, group=group, attrs=None)
 
     # Repeat test with attributes
@@ -448,6 +471,19 @@ def test_multi_file_one_file_per_rank_group(tmp_path):
     for n in (0, 1, 10, 100, 1000, 10000):
         do_multi_file_test(tmp_path, basename="file_per_rank_group", nr_files=comm_size, elements_per_file=n,
                            group="group")
+
+@pytest.mark.mpi
+def test_inconsistent_dtype(tmp_path):
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_size = comm.Get_size()
+
+    for n in (2, 10, 100, 1000, 10000):
+        with pytest.raises(RuntimeError):
+            do_multi_file_test(tmp_path, basename="inconsistent_dtype", nr_files=comm_size,
+                               elements_per_file=n, group="group", inconsistent_dtype=True)
+
 
 def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename, have_missing=False, group=None,
                           filename_method="attribute", compression=None):

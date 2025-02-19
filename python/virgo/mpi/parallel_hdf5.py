@@ -441,15 +441,23 @@ class MultiFile:
             if len(data[name]) > 0:
                 if read_attributes:
                     attrs = data[name][0].attrs
+
+                inconsistent_dtype = False
                 if len(data[name]) > 1:
                     for dset in data[name][1:]:
                         if dset.dtype != data[name][0].dtype:
-                            raise RuntimeError(f"Inconsistent dtype for {name}")
+                            inconsistent_dtype = True
+
                 data[name] = np.concatenate(data[name])
                 if read_attributes:
                     data[name] = AttributeArray(data[name], attrs=attrs)
             else:
+                inconsistent_dtype = False
                 data[name] = None
+
+            inconsistent_dtype = self.comm.allreduce(inconsistent_dtype)
+            if inconsistent_dtype:
+                raise RuntimeError(f"Inconsistent dtype for {name}")
 
         # Combine file indexes
         if file_nr is not None:
@@ -578,9 +586,13 @@ class MultiFile:
         for name in data:
             if data[name] is not None:
                 dtypes = self.comm.gather(data[name].dtype)
+                inconsistent_dtype = False
                 if self.comm.Get_rank() == 0:
                     if len(set(dtypes)) != 1:
-                        raise RuntimeError(f"Inconsistent dtype for {name}")
+                        inconsistent_dtype = True
+                inconsistent_dtype = self.comm.bcast(inconsistent_dtype)
+                if inconsistent_dtype:
+                    raise RuntimeError(f"Inconsistent dtype for {name}")
 
         # Attributes may now be missing from any zero size arrays we created
         if read_attributes:
