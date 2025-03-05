@@ -473,17 +473,39 @@ def test_multi_file_one_file_per_rank_group(tmp_path):
                            group="group")
 
 @pytest.mark.mpi
-def test_inconsistent_dtype(tmp_path):
+def test_inconsistent_dtype_independent(tmp_path):
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
     comm_size = comm.Get_size()
 
+    # Here we want to use independent mode and always more than one file so
+    # that we can introduce an inconsistent dtype even on one rank.
+    nr_files = comm_size * 2
+
     for n in (2, 10, 100, 1000, 10000):
         with pytest.raises(RuntimeError):
-            do_multi_file_test(tmp_path, basename="inconsistent_dtype", nr_files=comm_size,
+            do_multi_file_test(tmp_path, basename="inconsistent_dtype", nr_files=nr_files,
                                elements_per_file=n, group="group", inconsistent_dtype=True)
 
+@pytest.mark.mpi
+def test_inconsistent_dtype_collective(tmp_path):
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm_size = comm.Get_size()
+
+    # Here we want to use collective mode (comm_size > nr_files) but also have
+    # nr_files >= 2, so we can't run this test on two or fewer ranks.
+    if comm_size < 3:
+        pytest.skip("Need at least 3 MPI ranks for this test")
+    nr_files = max(comm_size // 2, 2)
+    assert comm_size > nr_files
+
+    for n in (2, 10, 100, 1000, 10000):
+        with pytest.raises(RuntimeError):
+            do_multi_file_test(tmp_path, basename="inconsistent_dtype", nr_files=nr_files,
+                               elements_per_file=n, group="group", inconsistent_dtype=True)
 
 def multi_file_round_trip(tmp_path, nr_files, elements_per_file, basename, have_missing=False, group=None,
                           filename_method="attribute", compression=None):
