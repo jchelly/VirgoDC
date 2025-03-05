@@ -26,7 +26,7 @@ $HDF5_HOME:
 export CC="mpicc"
 export HDF5_MPI="ON"
 export HDF5_DIR=${HDF5_HOME}
-pip install --no-binary h5py h5py
+pip install --no-binary=h5py h5py
 ```
 
 Running the tests requires pytest-mpi:
