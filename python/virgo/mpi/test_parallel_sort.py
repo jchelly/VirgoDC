@@ -28,7 +28,7 @@ def assert_rank_zero(condition, message, comm=None):
     from mpi4py import MPI
     if comm is None:
         comm = MPI.COMM_WORLD
-    comm_rank = comm.Get_rank()    
+    comm_rank = comm.Get_rank()
     condition = comm.bcast(condition)
     assert condition, message
 
@@ -403,12 +403,13 @@ def run_sendrecv_test(nchunk):
         elements_per_rank = 1000
         nr_elements = rank * elements_per_rank
         return np.arange(nr_elements, dtype=int) + 1000*rank
-    
+
     ptask = 0
     while(2**ptask < comm_size):
         ptask += 1
 
     # Loop over pairs of processes and exchange data
+    ok = True
     for ngrp in range(2**ptask):
         rank = comm_rank ^ ngrp
         if rank < comm_size:
@@ -425,7 +426,10 @@ def run_sendrecv_test(nchunk):
 
             # Exchange data
             psort.sendrecv(rank, sendbuf, recvbuf, comm=comm, nchunk=nchunk)
-            assert_all_ranks(np.all(recvbuf==recvbuf_check), "Unexpected result from sendrecv")
+            if not np.all(recvbuf==recvbuf_check):
+                ok = False
+
+    assert_all_ranks(ok, "Unexpected result from sendrecv")
 
 @pytest.mark.mpi
 def test_sendrecv_default_chunks():
