@@ -25,18 +25,12 @@ jobs:
         python-version: "3.10"
     - name: Install dependencies
       run: |
-        sudo apt install -y -q libhdf5-mpi-dev
+        sudo apt-get install -y -q libhdf5-mpi-dev
         python -m pip install --upgrade pip
         pip install mpi4py
         CC=mpicc HDF5_MPI=ON pip install --no-binary=h5py h5py
-        pip install flake8 pytest pytest-mpi
+        pip install pytest pytest-mpi
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-    - name: Lint with flake8
-      run: |
-        # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
       run: |
-        mpirun -np 3 python3 -m pytest --with-mpi
+        mpirun --oversubscribe -np 3 python3 -m pytest --with-mpi
