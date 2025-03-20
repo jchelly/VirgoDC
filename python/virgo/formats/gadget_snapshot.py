@@ -109,7 +109,7 @@ class GadgetBinarySnapshotFile(BinaryFile):
         for(name, typestr, shape, ptypes) in all_datasets:
 
             # Calculate number of particles we expect in this dataset
-            nextra = sum(npart_type[np.asarray(ptypes, dtype=np.bool)])
+            nextra = sum(npart_type[np.asarray(ptypes, dtype=bool)])
             if nextra > 0:
 
                 # Calculate number of numbers per particle

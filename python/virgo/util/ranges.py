@@ -47,7 +47,7 @@ def assign_ranges(array, offset, length, value):
         all_lengths = np.zeros(gap_length.shape[0]+length.shape[0], dtype=np.intp)
         all_lengths[0::2] = gap_length
         all_lengths[1::2] = length
-        mask = np.zeros(gap_length.shape[0]+length.shape[0], dtype=np.bool)
+        mask = np.zeros(gap_length.shape[0]+length.shape[0], dtype=bool)
         mask[1::2] = True
         mask = np.repeat(mask, all_lengths)
 
@@ -99,8 +99,8 @@ def sum_ranges(array, offset, length, dtype=None, weight=None,
     length_nz = length[ind]
 
     # Create mask to pick out elements to sum
-    mask = np.zeros(array.shape[0], dtype=np.bool)
-    assign_ranges(mask, offset_nz, length_nz, np.ones(offset_nz.shape[0], dtype=np.bool))
+    mask = np.zeros(array.shape[0], dtype=bool)
+    assign_ranges(mask, offset_nz, length_nz, np.ones(offset_nz.shape[0], dtype=bool))
     
     # Allocate output array
     shape    = list(array.shape)

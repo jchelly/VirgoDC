@@ -480,7 +480,7 @@ class Snapshot():
         """
 
         # Flag requested grid cells
-        hashgrid = np.zeros(self.nhash, dtype=np.bool)
+        hashgrid = np.zeros(self.nhash, dtype=bool)
         hashgrid[keys] = True
 
         # Loop over files to read
