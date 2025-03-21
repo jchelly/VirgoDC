@@ -19,16 +19,14 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python 3.10
+    - name: Set up Python 3.12
       uses: actions/setup-python@v3
       with:
-        python-version: "3.10"
+        python-version: "3.12"
     - name: Install dependencies
       run: |
-        sudo apt-get install -y -q libhdf5-mpi-dev
+        sudo apt-get install -y -q python3-h5py-mpi
         python -m pip install --upgrade pip
-        pip install mpi4py
-        CC=mpicc HDF5_MPI=ON pip install --no-binary=h5py h5py
         pip install pytest pytest-mpi
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - name: Test with pytest
