@@ -465,7 +465,7 @@ distributed between files in the same way as an input file set.
 
 ```
 virgo.mpi.parallel_hdf5.MultiFile.write(self, data, elements_per_file,
-    filenames, mode, group=None, attrs=None)
+    filenames, mode, group=None, attrs=None, create_dataset=True)
 ```
 This writes the supplied distributed arrays to a set of output files with the
 specified number of elements per file. The number of output files is the same
@@ -482,6 +482,9 @@ as in the input file set used to initialize the class.
   * `group` - the name of the HDF5 group to write the datasets to
   * `attrs` - a dict containing attributes to add to the datasets, of the form
     `attrs[dataset_name] = (attribute_name, attribute_value)`
+  * `create_dataset` - a bool specifying whether the dataset should be created,
+    if `False` it is assumed that a dataset of the appropriate shape and type
+    already exists (default is `True`)
 
 The get_elements_per_file() method can be used to get the value of
 elements_per_file needed to write output partitioned in the same way as some
