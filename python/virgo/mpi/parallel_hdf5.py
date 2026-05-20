@@ -335,10 +335,10 @@ class MultiFile:
                     with h5py.File(filename, "r") as infile:
                         if file_nr_attr is not None:
                             obj, attr = file_nr_attr
-                            nr_files = int(infile[obj].attrs[attr])
+                            nr_files = int(infile[obj].attrs[attr].flat[0])
                             file_idx = np.arange(nr_files)
                         elif file_nr_dataset is not None:
-                            nr_files = int(infile[file_nr_dataset][...])
+                            nr_files = int(infile[file_nr_dataset][0])
                             file_idx = np.arange(nr_files)
                         else:
                             raise Exception("Must specify one of file_nr_attr, file_nr_dataset, file_idx")
