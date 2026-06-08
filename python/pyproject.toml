@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61.0", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "virgodc"
-version = "1.0.3"
+dynamic = ["version"]
 authors = [
   { name="John Helly", email="j.c.helly@durham.ac.uk" },
 ]
@@ -36,3 +36,7 @@ packages = [
     'virgo.mpi'
 ]
 
+[tool.setuptools_scm]
+version_scheme = "guess-next-dev"
+local_scheme = "node-and-date"
+root = ".."
