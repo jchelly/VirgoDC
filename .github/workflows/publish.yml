@@ -19,17 +19,16 @@ jobs:
           python-version: "3.12"
 
       - name: Build release distributions
-        working-directory: ./python
         run: |
+          cd ./python
           python -m pip install build
           python -m build
 
       - name: Upload distributions
-        working-directory: ./python
         uses: actions/upload-artifact@v4
         with:
           name: release-dists
-          path: dist/
+          path: python/dist/
 
   pypi-publish:
     runs-on: ubuntu-latest
