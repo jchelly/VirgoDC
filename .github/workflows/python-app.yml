@@ -40,3 +40,35 @@ jobs:
     - name: Eight process test
       run: |
         mpirun --oversubscribe -np 8 python3 -m pytest --with-mpi
+
+  build_serial_hdf5:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install dependencies
+      run: |
+        sudo apt-get install -y -q openmpi-bin libopenmpi-dev
+        python -m pip install --upgrade pip
+        pip install h5py mpi4py
+        pip install pytest pytest-mpi
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    - name: Verify h5py has no parallel support
+      run: |
+        python3 -c "import h5py; assert not h5py.get_config().mpi, 'h5py was built with parallel support'"
+    - name: Single process test
+      run: |
+        mpirun --oversubscribe -np 1 python3 -m pytest --with-mpi
+    - name: Two process test
+      run: |
+        mpirun --oversubscribe -np 2 python3 -m pytest --with-mpi
+    - name: Three process test
+      run: |
+        mpirun --oversubscribe -np 3 python3 -m pytest --with-mpi
+    - name: Four process test
+      run: |
+        mpirun --oversubscribe -np 4 python3 -m pytest --with-mpi
+    - name: Eight process test
+      run: |
+        mpirun --oversubscribe -np 8 python3 -m pytest --with-mpi
