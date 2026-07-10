@@ -13,6 +13,17 @@ comm_rank = comm.Get_rank()
 np.random.seed(comm_rank)
 
 
+@pytest.fixture(params=[False, True], ids=["parallel_hdf5", "serial_hdf5"])
+def serial_hdf5(request, monkeypatch):
+    """
+    Runs a test twice: once against whatever parallel HDF5 support is
+    actually installed, and once with phdf5.SERIAL_HDF5 forced True to
+    exercise the non-parallel fallback regardless of what's installed.
+    """
+    monkeypatch.setattr(phdf5, "SERIAL_HDF5", request.param)
+    return request.param
+
+
 def do_collective_read(tmp_path, max_local_size, buffer_size=None):
     """
     Write out a dataset in serial mode, read it back in collective mode
@@ -46,8 +57,12 @@ def do_collective_read(tmp_path, max_local_size, buffer_size=None):
     comm.barrier()
 
     # Read back in the test data
-    with h5py.File(filepath, "r", driver="mpio", comm=comm) as infile:
-        arr_coll = phdf5.collective_read(infile["data"], comm, buffer_size)
+    if phdf5.SERIAL_HDF5:
+        with h5py.File(filepath, "r") as infile:
+            arr_coll = phdf5.collective_read(infile["data"], comm, buffer_size)
+    else:
+        with h5py.File(filepath, "r", driver="mpio", comm=comm) as infile:
+            arr_coll = phdf5.collective_read(infile["data"], comm, buffer_size)
 
     # Check the result on rank 0
     arr_coll = comm.gather(arr_coll)
@@ -60,14 +75,14 @@ def do_collective_read(tmp_path, max_local_size, buffer_size=None):
     assert all_equal, "Collective read returned incorrect data"
 
 @pytest.mark.mpi
-def test_collective_read_empty(tmp_path):
+def test_collective_read_empty(tmp_path, serial_hdf5):
     """
     Test collective read of an empty dataset
     """
     do_collective_read(tmp_path, 0)
 
 @pytest.mark.mpi
-def test_collective_read_1d(tmp_path):
+def test_collective_read_1d(tmp_path, serial_hdf5):
     """
     Test collective reads of various size 1D datasets
     """
@@ -75,7 +90,7 @@ def test_collective_read_1d(tmp_path):
         do_collective_read(tmp_path, max_local_size)
 
 @pytest.mark.mpi
-def test_collective_read_small_chunks_1d(tmp_path):
+def test_collective_read_small_chunks_1d(tmp_path, serial_hdf5):
     """
     Test collective reads of various size 1D datasets
 
@@ -85,7 +100,7 @@ def test_collective_read_small_chunks_1d(tmp_path):
         do_collective_read(tmp_path, max_local_size, buffer_size=256)
 
 @pytest.mark.mpi
-def test_collective_read_2d(tmp_path):
+def test_collective_read_2d(tmp_path, serial_hdf5):
     """
     Test collective reads of various size 2D datasets
     """
@@ -93,7 +108,7 @@ def test_collective_read_2d(tmp_path):
         do_collective_read(tmp_path, (max_local_size, 3))
 
 @pytest.mark.mpi
-def test_collective_read_small_chunks_2d(tmp_path):
+def test_collective_read_small_chunks_2d(tmp_path, serial_hdf5):
     """
     Test collective reads of various size 2D datasets
 
@@ -365,12 +380,12 @@ def do_multi_file_test(tmp_path, basename, nr_files, elements_per_file, group=No
     read_multi_file_output(tmp_path, basename, group=group, attrs=attrs)
 
 @pytest.mark.mpi
-def test_multi_file_single_file(tmp_path):
+def test_multi_file_single_file(tmp_path, serial_hdf5):
     for n in (0, 1, 10, 100, 1000, 10000):
         do_multi_file_test(tmp_path, basename="single_file", nr_files=1, elements_per_file=n)
 
 @pytest.mark.mpi
-def test_multi_file_single_file_group(tmp_path):
+def test_multi_file_single_file_group(tmp_path, serial_hdf5):
     for n in (0, 1, 10, 100, 1000, 10000):
         do_multi_file_test(tmp_path, basename="single_file_group", nr_files=1, elements_per_file=n,
                            group="group")
@@ -408,7 +423,7 @@ def test_multi_file_more_files_than_ranks_group_missing(tmp_path):
                            group="group", have_missing=True)
 
 @pytest.mark.mpi
-def test_multi_file_more_ranks_than_files(tmp_path):
+def test_multi_file_more_ranks_than_files(tmp_path, serial_hdf5):
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
@@ -422,7 +437,7 @@ def test_multi_file_more_ranks_than_files(tmp_path):
         do_multi_file_test(tmp_path, basename="more_ranks", nr_files=nr_files, elements_per_file=n)
 
 @pytest.mark.mpi
-def test_multi_file_more_ranks_than_files_group(tmp_path):
+def test_multi_file_more_ranks_than_files_group(tmp_path, serial_hdf5):
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
@@ -437,7 +452,7 @@ def test_multi_file_more_ranks_than_files_group(tmp_path):
                            group="group")
 
 @pytest.mark.mpi
-def test_multi_file_more_ranks_than_files_group_missing(tmp_path):
+def test_multi_file_more_ranks_than_files_group_missing(tmp_path, serial_hdf5):
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
@@ -489,7 +504,7 @@ def test_inconsistent_dtype_independent(tmp_path):
                                elements_per_file=n, group="group", inconsistent_dtype=True)
 
 @pytest.mark.mpi
-def test_inconsistent_dtype_collective(tmp_path):
+def test_inconsistent_dtype_collective(tmp_path, serial_hdf5):
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
@@ -604,7 +619,7 @@ def multi_file_round_trip_all_methods(tmp_path, nr_files, elements_per_file, bas
                                   have_missing, group, filename_method=filename_method, compression=compression)
 
 @pytest.mark.mpi
-def test_round_trip_single_file(tmp_path):
+def test_round_trip_single_file(tmp_path, serial_hdf5):
     multi_file_round_trip_all_methods(tmp_path, nr_files=1, elements_per_file=10000,
                           basename="round_trip_single_file")
 
@@ -619,7 +634,7 @@ def test_round_trip_file_per_rank(tmp_path):
                                       basename="round_trip_file_per_rank")
 
 @pytest.mark.mpi
-def test_round_trip_few_files(tmp_path):
+def test_round_trip_few_files(tmp_path, serial_hdf5):
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
@@ -630,7 +645,7 @@ def test_round_trip_few_files(tmp_path):
                                       basename="round_trip_few_files")
 
 @pytest.mark.mpi
-def test_round_trip_few_files_missing(tmp_path):
+def test_round_trip_few_files_missing(tmp_path, serial_hdf5):
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
@@ -644,7 +659,7 @@ def test_round_trip_few_files_missing(tmp_path):
                                       basename="round_trip_few_files_missing", have_missing=True)
 
 @pytest.mark.mpi
-def test_round_trip_few_files_missing_group(tmp_path):
+def test_round_trip_few_files_missing_group(tmp_path, serial_hdf5):
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD

@@ -1,6 +1,7 @@
 #!/bin/env python
 
 import collections
+import sys
 
 import numpy as np
 import h5py
@@ -9,6 +10,10 @@ import virgo.mpi.util
 # Default maximum size of I/O operations in bytes.
 # This is to avoid MPI issues with buffers >2GB.
 BUFFER_SIZE=100*1024*1024
+
+# Whether we're running without parallel HDF5. If so, MultiFile falls back to
+# independent I/O when multiple ranks need to share a single file.
+SERIAL_HDF5 = not bool(h5py.get_config().mpi)
 
 
 def substitute_file_nr(format_string, file_nr):
@@ -122,14 +127,15 @@ def collective_read(dataset, comm, buffer_size=None):
     # Determine offsets to read at on each task
     offset_on_task = np.cumsum(num_on_task) - num_on_task
 
-    if ntot < 10*comm_size:
-        # If the dataset is small, read on one rank and broadcast
+    if ntot < 10*comm_size or SERIAL_HDF5:
+        # If the dataset is small, or parallel HDF5 is not available, read on
+        # one rank and send each rank only its own slice
         if comm_rank == 0:
             data = dataset[...]
+            chunks = [data[offset_on_task[i]:offset_on_task[i]+num_on_task[i],...] for i in range(comm_size)]
         else:
-            data = None
-        data = comm.bcast(data)
-        return data[offset_on_task[comm_rank]:offset_on_task[comm_rank]+num_on_task[comm_rank],...]
+            chunks = None
+        return comm.scatter(chunks)
     else:
         # Otherwise do a collective read
         # Reading >2GB fails, so we may need to chunk the read.
@@ -169,7 +175,7 @@ def collective_write(group, name, data, comm, buffer_size=None, create_dataset=T
     """
     Do a parallel collective write of a HDF5 dataset by concatenating
     contributions from MPI ranks along the first axis.
-    
+
     File must have been opened in MPI mode.
     """
 
@@ -368,6 +374,11 @@ class MultiFile:
         else:
             # More ranks than files, so use collective reading and assign ranks to files.
             self.collective = True
+            if SERIAL_HDF5 and comm_rank == 0:
+                print("WARNING: more MPI ranks than files, but parallel HDF5 is not "
+                      "available. Falling back to non-parallel I/O, which will be "
+                      "slower and less memory efficient. Install a parallel HDF5 "
+                      "build for better performance.", file=sys.stderr, flush=True)
             num_ranks_on_file = assign_files(comm_size, num_files)
             first_rank_on_file = np.cumsum(num_ranks_on_file) - num_ranks_on_file
             # Find which file this rank is assigned to
@@ -492,9 +503,13 @@ class MultiFile:
         else:
             file_nr = None
 
-        # Open the file
+        # Open the file. Without parallel HDF5, each rank sharing this file
+        # opens its own independent, serial handle instead of a shared one.
         filename = self.filenames[self.collective_file_nr]
-        infile = h5py.File(filename, "r", driver="mpio", comm=comm)
+        if SERIAL_HDF5:
+            infile = h5py.File(filename, "r")
+        else:
+            infile = h5py.File(filename, "r", driver="mpio", comm=comm)
 
         # Find HDF5 group to read from
         if group is None:
@@ -634,32 +649,41 @@ class MultiFile:
 
         # Avoid initializing HDF5 (and therefore MPI) until necessary
         import h5py
-        
+
         elements_per_file = {}
         if self.collective:
-            # Collective I/O: groups of ranks read a file each
+            # Collective I/O: groups of ranks read a file each. Only the
+            # total number of elements is needed, so rank 0 of the group
+            # alone opens the file (no need for a parallel HDF5 driver) and
+            # broadcasts it to the rest of the group.
             comm = self.comm.Split(self.collective_file_nr, self.rank_in_file)
+            comm_rank = comm.Get_rank()
+            comm_size = comm.Get_size()
             filename = self.filenames[self.collective_file_nr]
-            infile = h5py.File(filename, "r", driver="mpio", comm=comm)            
-            # Determine group to read from
-            if group is None:
-                loc = infile
-            elif group in infile:
-                loc = infile[group]
+            if comm_rank == 0:
+                with h5py.File(filename, "r") as infile:
+                    # Determine group to read from
+                    if group is None:
+                        loc = infile
+                    elif group in infile:
+                        loc = infile[group]
+                    else:
+                        loc = None
+                    if loc is not None and name in loc:
+                        ntot = loc[name].shape[0]
+                    else:
+                        ntot = None
             else:
-                loc = None
-            if loc is not None and name in loc:
-                ntot = loc[name].shape[0]
-                comm_size = comm.Get_size()
-                comm_rank = comm.Get_rank()
+                ntot = None
+            ntot = comm.bcast(ntot)
+            if ntot is None:
+                elements_per_file[self.all_file_indexes[self.collective_file_nr]] = 0
+            else:
                 num_on_task = np.zeros(comm_size, dtype=int)
                 num_on_task[:] = ntot // comm_size
                 num_on_task[0:ntot % comm_size] += 1
                 assert sum(num_on_task) == ntot
                 elements_per_file[self.all_file_indexes[self.collective_file_nr]] = num_on_task[comm_rank]
-            else:
-                elements_per_file[self.all_file_indexes[self.collective_file_nr]] = 0
-            infile.close()
             comm.Free()
         else:
             # Independent I/O: different ranks read different files
@@ -702,7 +726,7 @@ class MultiFile:
         for i in range(first, first+num):
             filename = all_filenames[i]
             with h5py.File(filename, mode) as outfile:
-                
+
                 # Ensure the group exists
                 if group is not None:
                     loc = outfile.require_group(group)
@@ -738,8 +762,43 @@ class MultiFile:
         import h5py
         comm = self.comm.Split(self.collective_file_nr, self.rank_in_file)
 
-        # Open the file
         filename = all_filenames[self.collective_file_nr]
+
+        if SERIAL_HDF5:
+            # No parallel HDF5 available: gather each dataset onto rank 0 of
+            # the group of ranks sharing this file, then write it there with
+            # a plain, serial file open.
+            import virgo.mpi.gather_array as ga
+            length = elements_per_file[self.all_file_indexes[self.collective_file_nr]]
+            for name in data:
+                assert length == data[name].shape[0]
+            gathered_data = {name : ga.gather_array(data[name], root=0, comm=comm) for name in data}
+            if comm.Get_rank() == 0:
+                if dcpl is None:
+                    dcpl = h5py.h5p.create(h5py.h5p.DATASET_CREATE)
+                with h5py.File(filename, mode) as outfile:
+                    if group is not None:
+                        loc = outfile.require_group(group)
+                    else:
+                        loc = outfile
+                    for name in gathered_data:
+                        if create_dataset:
+                            shape = gathered_data[name].shape
+                            dcpl_compressed = compress_dcpl(dcpl, shape, gzip, shuffle, chunk)
+                            dspace_id = h5py.h5s.create_simple(shape)
+                            dtype_id = h5py.h5t.py_create(gathered_data[name].dtype)
+                            dataset_id = h5py.h5d.create(loc.id, name.encode(), dtype_id, dspace_id, dcpl=dcpl_compressed)
+                            dataset = h5py.Dataset(dataset_id)
+                        else:
+                            dataset = loc[name]
+                        dataset[...] = gathered_data[name]
+                        if attrs is not None and name in attrs:
+                            for attr_name, attr_val in attrs[name].items():
+                                dataset.attrs[attr_name] = attr_val
+            comm.Free()
+            return
+
+        # Open the file
         outfile = h5py.File(filename, mode, driver="mpio", comm=comm)
 
         # Ensure the group exists
@@ -747,7 +806,7 @@ class MultiFile:
             loc = outfile.require_group(group)
         else:
             loc = outfile
-        
+
         # Write the data
         for name in data:
             length = elements_per_file[self.all_file_indexes[self.collective_file_nr]]
@@ -759,7 +818,7 @@ class MultiFile:
             if attrs is not None and name in attrs:
                 for attr_name, attr_val in attrs[name].items():
                     dataset.attrs[attr_name] = attr_val
-         
+
         outfile.close()
         comm.Free()
 
