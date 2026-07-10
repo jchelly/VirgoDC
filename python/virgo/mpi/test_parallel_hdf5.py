@@ -16,9 +16,8 @@ np.random.seed(comm_rank)
 @pytest.fixture(params=[False, True], ids=["parallel_hdf5", "serial_hdf5"])
 def serial_hdf5(request, monkeypatch):
     """
-    Runs a test twice: once against whatever parallel HDF5 support is
-    actually installed, and once with phdf5.SERIAL_HDF5 forced True to
-    exercise the non-parallel fallback regardless of what's installed.
+    Runs a test twice: once against with parallel HDF5 and once to
+    exercise the non-parallel fallback.
     """
     monkeypatch.setattr(phdf5, "SERIAL_HDF5", request.param)
     return request.param

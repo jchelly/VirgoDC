@@ -11,8 +11,7 @@ import virgo.mpi.util
 # This is to avoid MPI issues with buffers >2GB.
 BUFFER_SIZE=100*1024*1024
 
-# Whether we're running without parallel HDF5. If so, MultiFile falls back to
-# independent I/O when multiple ranks need to share a single file.
+# Whether we're running without parallel HDF5.
 SERIAL_HDF5 = not bool(h5py.get_config().mpi)
 
 
@@ -503,8 +502,7 @@ class MultiFile:
         else:
             file_nr = None
 
-        # Open the file. Without parallel HDF5, each rank sharing this file
-        # opens its own independent, serial handle instead of a shared one.
+        # Open the file
         filename = self.filenames[self.collective_file_nr]
         if SERIAL_HDF5:
             infile = h5py.File(filename, "r")
@@ -652,15 +650,13 @@ class MultiFile:
 
         elements_per_file = {}
         if self.collective:
-            # Collective I/O: groups of ranks read a file each. Only the
-            # total number of elements is needed, so rank 0 of the group
-            # alone opens the file (no need for a parallel HDF5 driver) and
-            # broadcasts it to the rest of the group.
+            # Collective I/O: groups of ranks read a file each
             comm = self.comm.Split(self.collective_file_nr, self.rank_in_file)
             comm_rank = comm.Get_rank()
             comm_size = comm.Get_size()
             filename = self.filenames[self.collective_file_nr]
             if comm_rank == 0:
+                # Read the number of elements on rank 0 and broadcast
                 with h5py.File(filename, "r") as infile:
                     # Determine group to read from
                     if group is None:
