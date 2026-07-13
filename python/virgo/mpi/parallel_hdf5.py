@@ -723,22 +723,29 @@ class MultiFile:
             comm_size = comm.Get_size()
             filename = self.filenames[self.collective_file_nr]
             if comm_rank == 0:
-                # Read the number of elements on rank 0 and broadcast
-                with h5py.File(filename, "r") as infile:
-                    # Determine group to read from
-                    if group is None:
-                        loc = infile
-                    elif group in infile:
-                        loc = infile[group]
-                    else:
-                        loc = None
-                    if loc is not None and name in loc:
-                        ntot = loc[name].shape[0]
-                    else:
-                        ntot = None
+                # Read the number of elements on rank 0 and broadcast.
+                # Any exception is turned into a value and broadcast too.
+                try:
+                    with h5py.File(filename, "r") as infile:
+                        # Determine group to read from
+                        if group is None:
+                            loc = infile
+                        elif group in infile:
+                            loc = infile[group]
+                        else:
+                            loc = None
+                        if loc is not None and name in loc:
+                            ntot = loc[name].shape[0]
+                        else:
+                            ntot = None
+                    result = (None, ntot)
+                except Exception as e:
+                    result = (str(e), None)
             else:
-                ntot = None
-            ntot = comm.bcast(ntot)
+                result = None
+            error, ntot = comm.bcast(result)
+            if error is not None:
+                raise RuntimeError(f"Rank 0 failed to read from {filename}: {error}")
             if ntot is None:
                 elements_per_file[self.all_file_indexes[self.collective_file_nr]] = 0
             else:
@@ -831,12 +838,26 @@ class MultiFile:
             # No parallel HDF5 available: gather each dataset onto rank 0 of
             # the group of ranks sharing this file, then write it there with
             # a plain, serial file open.
+            # Open the file (and group) on rank 0 only.
             if comm.Get_rank() == 0:
-                outfile = h5py.File(filename, mode)
-                loc = outfile.require_group(group) if group is not None else outfile
+                try:
+                    outfile = h5py.File(filename, mode)
+                    loc = outfile.require_group(group) if group is not None else outfile
+                    error = None
+                except Exception as e:
+                    outfile = None
+                    loc = None
+                    error = str(e)
             else:
                 outfile = None
                 loc = None
+                error = None
+            error = comm.bcast(error)
+            if error is not None:
+                if outfile is not None:
+                    outfile.close()
+                comm.Free()
+                raise RuntimeError(f"Rank 0 failed to open {filename}: {error}")
             for name in data:
                 length = elements_per_file[self.all_file_indexes[self.collective_file_nr]]
                 assert length == data[name].shape[0]
