@@ -46,8 +46,12 @@ def do_collective_read(tmp_path, max_local_size, buffer_size=None):
     comm.barrier()
 
     # Read back in the test data
-    with h5py.File(filepath, "r", driver="mpio", comm=comm) as infile:
-        arr_coll = phdf5.collective_read(infile["data"], comm, buffer_size)
+    if phdf5.SERIAL_HDF5:
+        with h5py.File(filepath, "r") as infile:
+            arr_coll = phdf5.collective_read(infile["data"], comm, buffer_size)
+    else:
+        with h5py.File(filepath, "r", driver="mpio", comm=comm) as infile:
+            arr_coll = phdf5.collective_read(infile["data"], comm, buffer_size)
 
     # Check the result on rank 0
     arr_coll = comm.gather(arr_coll)
@@ -109,6 +113,9 @@ def do_collective_write(tmp_path, max_local_size, buffer_size=None):
 
     Repeats test with different compression options.
     """
+
+    if phdf5.SERIAL_HDF5:
+        pytest.skip("collective_write() requires parallel HDF5")
 
     no_compression     = {}
     gzip_chunk         = {"gzip" : 6, "chunk" : buffer_size}
@@ -195,6 +202,106 @@ def test_collective_write_small_chunks_2d(tmp_path):
     """
     for max_local_size in (1, 10, 100, 1000, 10000, 100000):
         do_collective_write(tmp_path, (max_local_size,3), buffer_size=256)
+
+
+def do_serial_collective_write(tmp_path, max_local_size, chunk=None):
+    """
+    Write out a dataset with serial_collective_write() (gather onto rank
+    zero, write with a plain, non-parallel HDF5 file handle), then gather
+    on rank zero to check that the contents are correct.
+
+    Repeats test with different compression options. Unlike
+    collective_write(), this does not depend on parallel HDF5, so it is
+    run regardless of the value of phdf5.SERIAL_HDF5.
+    """
+
+    no_compression     = {}
+    gzip_chunk         = {"gzip" : 6, "chunk" : chunk}
+    gzip_shuffle_chunk = {"gzip" : 6, "chunk" : chunk, "shuffle" : True}
+
+    for compression in (no_compression, gzip_chunk, gzip_shuffle_chunk):
+
+        from mpi4py import MPI
+        comm = MPI.COMM_WORLD
+        comm_rank = comm.Get_rank()
+        comm_size = comm.Get_size()
+
+        # If max_local_size is an int, make it a single element tuple
+        try:
+            max_local_size = tuple([int(i) for i in max_local_size])
+        except TypeError:
+            max_local_size = (int(max_local_size),)
+
+        # Where to write the test file
+        filepath = tmp_path / f"serial_collective_write_test_{max_local_size}.hdf5"
+        filepath = comm.bcast(filepath)
+
+        # Generate the test data
+        if max_local_size[0] > 0:
+            n_local = np.random.randint(max_local_size[0])
+        else:
+            n_local = 0
+        arr_local = np.random.uniform(low=-1.0e6, high=1.0e6, size=(n_local,)+max_local_size[1:])
+
+        # Write out the data, gathering onto rank zero
+        outfile = h5py.File(filepath, "w") if comm_rank == 0 else None
+        phdf5.serial_collective_write(outfile, "data", arr_local, comm, **compression)
+        if outfile is not None:
+            outfile.close()
+        comm.barrier()
+
+        # Gather data on rank zero and check
+        arr = comm.gather(arr_local)
+        if comm_rank == 0:
+            arr = np.concatenate(arr)
+            with h5py.File(filepath, "r") as infile:
+                arr_check = infile["data"][...]
+            all_equal = np.all(arr==arr_check)
+        else:
+            all_equal = None
+        all_equal = comm.bcast(all_equal)
+
+        assert all_equal, "serial_collective_write() returned incorrect data"
+
+
+@pytest.mark.mpi
+def test_serial_collective_write_empty(tmp_path):
+    """
+    Test serial collective write of an empty dataset
+    """
+    do_serial_collective_write(tmp_path, 0)
+
+@pytest.mark.mpi
+def test_serial_collective_write_1d(tmp_path):
+    """
+    Test serial collective writes of various size 1D datasets
+    """
+    for max_local_size in (1, 10, 100, 1000, 10000, 100000):
+        do_serial_collective_write(tmp_path, max_local_size)
+
+@pytest.mark.mpi
+def test_serial_collective_write_small_chunks_1d(tmp_path):
+    """
+    Test serial collective writes of various size 1D datasets
+    """
+    for max_local_size in (1, 10, 100, 1000, 10000, 100000):
+        do_serial_collective_write(tmp_path, max_local_size, chunk=256)
+
+@pytest.mark.mpi
+def test_serial_collective_write_2d(tmp_path):
+    """
+    Test serial collective writes of various size 2D datasets
+    """
+    for max_local_size in (1, 10, 100, 1000, 10000, 100000):
+        do_serial_collective_write(tmp_path, (max_local_size,3))
+
+@pytest.mark.mpi
+def test_serial_collective_write_small_chunks_2d(tmp_path):
+    """
+    Test serial collective writes of various size 2D datasets
+    """
+    for max_local_size in (1, 10, 100, 1000, 10000, 100000):
+        do_serial_collective_write(tmp_path, (max_local_size,3), chunk=256)
 
 def create_multi_file_output(
         tmp_path,

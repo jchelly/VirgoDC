@@ -1,6 +1,7 @@
 #!/bin/env python
 
 import collections
+import sys
 
 import numpy as np
 import h5py
@@ -9,6 +10,9 @@ import virgo.mpi.util
 # Default maximum size of I/O operations in bytes.
 # This is to avoid MPI issues with buffers >2GB.
 BUFFER_SIZE=100*1024*1024
+
+# Whether we're running without parallel HDF5.
+SERIAL_HDF5 = not bool(h5py.get_config().mpi)
 
 
 def substitute_file_nr(format_string, file_nr):
@@ -122,14 +126,17 @@ def collective_read(dataset, comm, buffer_size=None):
     # Determine offsets to read at on each task
     offset_on_task = np.cumsum(num_on_task) - num_on_task
 
-    if ntot < 10*comm_size:
-        # If the dataset is small, read on one rank and broadcast
+    if ntot < 10*comm_size or SERIAL_HDF5:
+        # If the dataset is small, or parallel HDF5 is not available, read on
+        # one rank and repartition so each rank gets its own slice.
+        # Uses repartition() rather than scatter() because scatter() is not
+        # safe for messages >2GB.
+        import virgo.mpi.parallel_sort as psort
         if comm_rank == 0:
             data = dataset[...]
         else:
-            data = None
-        data = comm.bcast(data)
-        return data[offset_on_task[comm_rank]:offset_on_task[comm_rank]+num_on_task[comm_rank],...]
+            data = np.empty((0,)+dataset.shape[1:], dtype=dataset.dtype)
+        return psort.repartition(data, num_on_task, comm=comm)
     else:
         # Otherwise do a collective read
         # Reading >2GB fails, so we may need to chunk the read.
@@ -164,12 +171,69 @@ def collective_read(dataset, comm, buffer_size=None):
     return data
 
 
+def _collective_write_metadata(data, comm):
+    """
+    Shared setup for collective_write() and serial_collective_write():
+    ensure the input is contiguous, count how many elements each rank is
+    contributing to the write, and check that shape/dtype are consistent
+    across ranks.
+
+    Returns (data, num_on_task, ntot, shape, dtype), where shape/dtype are
+    the values agreed by all ranks (excluding the first axis of shape).
+    """
+
+    # Ensure input is a contiguous numpy array
+    data = np.ascontiguousarray(data)
+
+    # Determine how many elements each rank is contributing
+    num_on_task = np.asarray(comm.allgather(data.shape[0]))
+    ntot = np.sum(num_on_task)
+
+    # Need to have all dimensions but the first the same between ranks
+    shape_local = tuple(data.shape[1:])
+    shape = tuple(comm.bcast(shape_local))
+    if shape_local != shape:
+        raise ValueError("Inconsistent data shapes in collective write!")
+
+    # Need to have the same data type on all ranks
+    dtype_local = data.dtype
+    dtype = comm.bcast(dtype_local)
+    if dtype_local != dtype:
+        raise ValueError("Inconsistent data types in collective write!")
+
+    return data, num_on_task, ntot, shape, dtype
+
+
+def _create_or_open_dataset(loc, name, full_shape, dtype, create_dataset, dcpl, gzip, shuffle, chunk):
+    """
+    Shared dataset creation for collective_write() and
+    serial_collective_write(): create a new dataset with the requested
+    shape/compression, or fetch the existing one if create_dataset=False.
+    """
+
+    import h5py
+
+    if not create_dataset:
+        return loc[name]
+
+    if dcpl is None:
+        dcpl = h5py.h5p.create(h5py.h5p.DATASET_CREATE)
+    else:
+        dcpl = dcpl.copy()
+
+    dcpl_compressed = compress_dcpl(dcpl, full_shape, gzip, shuffle, chunk)
+    dspace_id = h5py.h5s.create_simple(tuple(full_shape))
+    dtype_id = h5py.h5t.py_create(dtype)
+    dataset_id = h5py.h5d.create(loc.id, name.encode(), dtype_id, dspace_id, dcpl=dcpl_compressed)
+    return h5py.Dataset(dataset_id)
+
+
 def collective_write(group, name, data, comm, buffer_size=None, create_dataset=True,
                      dcpl=None, gzip=None, shuffle=False, chunk=None):
     """
     Do a parallel collective write of a HDF5 dataset by concatenating
     contributions from MPI ranks along the first axis.
-    
+
     File must have been opened in MPI mode.
     """
 
@@ -177,54 +241,22 @@ def collective_write(group, name, data, comm, buffer_size=None, create_dataset=T
         buffer_size = BUFFER_SIZE
 
     import h5py
-    from mpi4py import MPI
-
-    # Get (or update) dataset creation property list
-    if create_dataset:
-        if dcpl is None:
-            dcpl = h5py.h5p.create(h5py.h5p.DATASET_CREATE)
-        else:
-            dcpl = dcpl.copy()
-
-    # Ensure input is a contiguous numpy array
-    data = np.ascontiguousarray(data)
 
     # Find communicator file was opened with
     #comm, info = group.file.id.get_access_plist().get_fapl_mpio()
     comm_rank = comm.Get_rank()
-    comm_size = comm.Get_size()
 
-    # Determine how many elements to write on each task
-    num_on_task = np.asarray(comm.allgather(data.shape[0]))
-    ntot = np.sum(num_on_task)
+    data, num_on_task, ntot, shape, dtype = _collective_write_metadata(data, comm)
 
     # Determine offsets at which to write data from each task
     offset_on_task = np.cumsum(num_on_task) - num_on_task
 
-    # Need to have all dimensions but the first the same between ranks
-    shape_local = tuple(data.shape[1:])
-    shape_rank0 = tuple(comm.bcast(shape_local))
-    if shape_local != shape_rank0:
-        raise ValueError("Inconsistent data shapes in collective_write()!")
-
-    # Need to have the same data type on all ranks
-    dtype_local = data.dtype
-    dtype_rank0 = comm.bcast(dtype_local)
-    if dtype_local != dtype_rank0:
-        raise ValueError("Inconsistent data types in collective_write()!")
-
     # Find the full shape of the new dataset
-    full_shape = [ntot,] + list(shape_local)
+    full_shape = (ntot,) + shape
 
     # Create the dataset if necessary
-    if create_dataset:
-        dspace_id = h5py.h5s.create_simple(tuple(full_shape))
-        dtype_id = h5py.h5t.py_create(data.dtype)
-        dcpl_compressed = compress_dcpl(dcpl, full_shape, gzip, shuffle, chunk)
-        dataset_id = h5py.h5d.create(group.id, name.encode(), dtype_id, dspace_id, dcpl=dcpl_compressed)
-        dataset = h5py.Dataset(dataset_id)
-    else:
-        dataset = group[name]
+    dataset = _create_or_open_dataset(group, name, full_shape, dtype, create_dataset,
+                                      dcpl, gzip, shuffle, chunk)
 
     # Determine slice to write
     file_offset   = offset_on_task[comm_rank]
@@ -275,6 +307,46 @@ def collective_write(group, name, data, comm, buffer_size=None, create_dataset=T
         file_offset   += nr_to_write
         memory_offset += nr_to_write
         nr_left       -= nr_to_write
+
+    return dataset
+
+
+def serial_collective_write(group, name, data, comm, create_dataset=True,
+                            dcpl=None, gzip=None, shuffle=False, chunk=None):
+    """
+    Serial equivalent of collective_write(): gather the contributions from
+    all MPI ranks onto rank 0 and write them there using a plain,
+    non-parallel HDF5 file handle.
+
+    group must be open (or None) on rank 0 only - it is not accessed on
+    other ranks. Returns the dataset on rank 0 and None elsewhere.
+
+    Ranks other than 0 may return before rank 0 has finished writing, so
+    callers must comm.barrier() before relying on the write being complete
+    (e.g. before closing the file or reading it back).
+    """
+
+    import virgo.mpi.parallel_sort as psort
+
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+
+    data, num_on_task, ntot, shape, dtype = _collective_write_metadata(data, comm)
+
+    # Gather all the data onto rank 0. Uses repartition() rather than
+    # gather_array()/Gatherv() because those are not safe for messages >2GB.
+    ndesired = np.zeros(comm_size, dtype=int)
+    ndesired[0] = ntot
+    gathered_data = psort.repartition(data, ndesired, comm=comm)
+
+    if comm_rank != 0:
+        return None
+
+    # Create the dataset if necessary
+    full_shape = (ntot,) + shape
+    dataset = _create_or_open_dataset(group, name, full_shape, dtype, create_dataset,
+                                      dcpl, gzip, shuffle, chunk)
+    dataset[...] = gathered_data
 
     return dataset
 
@@ -368,6 +440,11 @@ class MultiFile:
         else:
             # More ranks than files, so use collective reading and assign ranks to files.
             self.collective = True
+            if SERIAL_HDF5 and comm_rank == 0:
+                print("WARNING: more MPI ranks than files, but parallel HDF5 is not "
+                      "available. Falling back to non-parallel I/O, which will be "
+                      "slower and less memory efficient. Install a parallel HDF5 "
+                      "build for better performance.", file=sys.stderr, flush=True)
             num_ranks_on_file = assign_files(comm_size, num_files)
             first_rank_on_file = np.cumsum(num_ranks_on_file) - num_ranks_on_file
             # Find which file this rank is assigned to
@@ -494,7 +571,10 @@ class MultiFile:
 
         # Open the file
         filename = self.filenames[self.collective_file_nr]
-        infile = h5py.File(filename, "r", driver="mpio", comm=comm)
+        if SERIAL_HDF5:
+            infile = h5py.File(filename, "r")
+        else:
+            infile = h5py.File(filename, "r", driver="mpio", comm=comm)
 
         # Find HDF5 group to read from
         if group is None:
@@ -634,32 +714,46 @@ class MultiFile:
 
         # Avoid initializing HDF5 (and therefore MPI) until necessary
         import h5py
-        
+
         elements_per_file = {}
         if self.collective:
             # Collective I/O: groups of ranks read a file each
             comm = self.comm.Split(self.collective_file_nr, self.rank_in_file)
+            comm_rank = comm.Get_rank()
+            comm_size = comm.Get_size()
             filename = self.filenames[self.collective_file_nr]
-            infile = h5py.File(filename, "r", driver="mpio", comm=comm)            
-            # Determine group to read from
-            if group is None:
-                loc = infile
-            elif group in infile:
-                loc = infile[group]
+            if comm_rank == 0:
+                # Read the number of elements on rank 0 and broadcast.
+                # Any exception is turned into a value and broadcast too.
+                try:
+                    with h5py.File(filename, "r") as infile:
+                        # Determine group to read from
+                        if group is None:
+                            loc = infile
+                        elif group in infile:
+                            loc = infile[group]
+                        else:
+                            loc = None
+                        if loc is not None and name in loc:
+                            ntot = loc[name].shape[0]
+                        else:
+                            ntot = None
+                    result = (None, ntot)
+                except Exception as e:
+                    result = (str(e), None)
             else:
-                loc = None
-            if loc is not None and name in loc:
-                ntot = loc[name].shape[0]
-                comm_size = comm.Get_size()
-                comm_rank = comm.Get_rank()
+                result = None
+            error, ntot = comm.bcast(result)
+            if error is not None:
+                raise RuntimeError(f"Rank 0 failed to read from {filename}: {error}")
+            if ntot is None:
+                elements_per_file[self.all_file_indexes[self.collective_file_nr]] = 0
+            else:
                 num_on_task = np.zeros(comm_size, dtype=int)
                 num_on_task[:] = ntot // comm_size
                 num_on_task[0:ntot % comm_size] += 1
                 assert sum(num_on_task) == ntot
                 elements_per_file[self.all_file_indexes[self.collective_file_nr]] = num_on_task[comm_rank]
-            else:
-                elements_per_file[self.all_file_indexes[self.collective_file_nr]] = 0
-            infile.close()
             comm.Free()
         else:
             # Independent I/O: different ranks read different files
@@ -702,7 +796,7 @@ class MultiFile:
         for i in range(first, first+num):
             filename = all_filenames[i]
             with h5py.File(filename, mode) as outfile:
-                
+
                 # Ensure the group exists
                 if group is not None:
                     loc = outfile.require_group(group)
@@ -738,8 +832,51 @@ class MultiFile:
         import h5py
         comm = self.comm.Split(self.collective_file_nr, self.rank_in_file)
 
-        # Open the file
         filename = all_filenames[self.collective_file_nr]
+
+        if SERIAL_HDF5:
+            # No parallel HDF5 available: gather each dataset onto rank 0 of
+            # the group of ranks sharing this file, then write it there with
+            # a plain, serial file open.
+            # Open the file (and group) on rank 0 only.
+            if comm.Get_rank() == 0:
+                try:
+                    outfile = h5py.File(filename, mode)
+                    loc = outfile.require_group(group) if group is not None else outfile
+                    error = None
+                except Exception as e:
+                    outfile = None
+                    loc = None
+                    error = str(e)
+            else:
+                outfile = None
+                loc = None
+                error = None
+            error = comm.bcast(error)
+            if error is not None:
+                if outfile is not None:
+                    outfile.close()
+                comm.Free()
+                raise RuntimeError(f"Rank 0 failed to open {filename}: {error}")
+            for name in data:
+                length = elements_per_file[self.all_file_indexes[self.collective_file_nr]]
+                assert length == data[name].shape[0]
+                dataset = serial_collective_write(loc, name, data[name], comm, dcpl=dcpl,
+                                                  gzip=gzip, shuffle=shuffle, chunk=chunk,
+                                                  create_dataset=create_dataset)
+                if dataset is not None and attrs is not None and name in attrs:
+                    for attr_name, attr_val in attrs[name].items():
+                        dataset.attrs[attr_name] = attr_val
+            if outfile is not None:
+                outfile.close()
+            # Ranks whose repartition() exchange with rank 0 completed early
+            # could otherwise race ahead before rank 0 has written and
+            # closed the file.
+            comm.barrier()
+            comm.Free()
+            return
+
+        # Open the file
         outfile = h5py.File(filename, mode, driver="mpio", comm=comm)
 
         # Ensure the group exists
@@ -747,7 +884,7 @@ class MultiFile:
             loc = outfile.require_group(group)
         else:
             loc = outfile
-        
+
         # Write the data
         for name in data:
             length = elements_per_file[self.all_file_indexes[self.collective_file_nr]]
@@ -759,7 +896,7 @@ class MultiFile:
             if attrs is not None and name in attrs:
                 for attr_name, attr_val in attrs[name].items():
                     dataset.attrs[attr_name] = attr_val
-         
+
         outfile.close()
         comm.Free()
 

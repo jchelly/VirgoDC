@@ -20,8 +20,8 @@ loading environment modules) and run
 python -m pip install mpi4py
 ```
 
-To install h5py, if the right mpicc is in your $PATH and HDF5 is installed at
-$HDF5_HOME:
+To install h5py with parallel support, ensure the right mpicc is in your
+$PATH and HDF5 is installed at $HDF5_HOME:
 ```
 export CC="mpicc"
 export HDF5_MPI="ON"
@@ -33,6 +33,13 @@ Running the tests requires pytest-mpi:
 ```
 pip install pytest-mpi
 ```
+
+If h5py is installed without parallel support, virgo.mpi.parallel_hdf5 falls
+back to gathering data onto a single MPI rank and doing serial HDF5 I/O
+instead of a genuine parallel collective read/write. This fallback is
+intended only as a convenience for testing on systems where a parallel HDF5
+build isn't available. For any real usage, install h5py with parallel support
+as described above.
 
 The module can then be installed using pip:
 ```
@@ -334,6 +341,10 @@ The module virgo.mpi.parallel_hdf5 contains functions for reading and writing
 distributed arrays stored in sets of HDF5 files, using MPI collective I/O
 where possible. These can be useful for reading simulation snapshots and halo
 finder output.
+
+If `virgo.mpi.parallel_hdf5.SERIAL_HDF5` is True, h5py was built without
+parallel support, and `MultiFile` transparently falls back to serial I/O on
+a single rank. This fallback should be avoided for production runs.
 
 ### Collective HDF5 Read
 
