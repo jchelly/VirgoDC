@@ -25,6 +25,9 @@ jobs:
         python -m pip install --upgrade pip
         pip install pytest pytest-mpi
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    - name: Verify SERIAL_HDF5 is false
+      run: |
+        PYTHONPATH=python python3 -c "import virgo.mpi.parallel_hdf5 as phdf5; assert not phdf5.SERIAL_HDF5, 'SERIAL_HDF5 is true, but parallel HDF5 is installed'"
     - name: Single process test
       run: |
         mpirun --oversubscribe -np 1 python3 -m pytest --with-mpi
